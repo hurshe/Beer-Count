@@ -1,25 +1,64 @@
 # -*- mode: python ; coding: utf-8 -*-
-import os, customtkinter
-ctk_path = os.path.dirname(customtkinter.__file__)
+import os, sys
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[(ctk_path, 'customtkinter')],
-    hiddenimports=['customtkinter','openpyxl','sqlite3','tkinter',
-                   'tkinter.messagebox','tkinter.filedialog'],
-    hookspath=[], hooksconfig={}, runtime_hooks=[],
-    excludes=[], noarchive=False,
+    datas=[],
+    hiddenimports=[
+        'customtkinter',
+        'customtkinter.windows',
+        'customtkinter.windows.widgets',
+        'customtkinter.windows.widgets.appearance_mode',
+        'customtkinter.windows.widgets.color_manager',
+        'customtkinter.windows.widgets.font',
+        'customtkinter.windows.widgets.image',
+        'customtkinter.windows.widgets.scaling',
+        'customtkinter.windows.widgets.theme',
+        'customtkinter.windows.widgets.utility',
+        'openpyxl',
+        'openpyxl.styles',
+        'openpyxl.utils',
+        'sqlite3',
+        '_sqlite3',
+        'tkinter',
+        'tkinter.messagebox',
+        'tkinter.filedialog',
+        'PIL',
+        'PIL.Image',
+        'PIL.ImageTk',
+    ],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
 )
+
+import customtkinter
+ctk_dir = os.path.dirname(customtkinter.__file__)
+a.datas += Tree(ctk_dir, prefix='customtkinter', excludes=['*.pyc'])
+
 pyz = PYZ(a.pure)
+
 exe = EXE(
-    pyz, a.scripts, a.binaries, a.datas, [],
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.datas,
+    [],
     name='BeerCount_HRC',
-    debug=False, bootloader_ignore_signals=False,
-    strip=False, upx=True, upx_exclude=[],
-    runtime_tmpdir=None, console=False,
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
     disable_windowed_traceback=False,
-    argv_emulation=False, target_arch=None,
-    codesign_identity=None, entitlements_file=None,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
 )
