@@ -20,7 +20,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install customtkinter==5.2.2
+          pip install openpyxl==3.1.2
+          pip install pillow
+          pip install pyinstaller==6.3.0
 
       - name: Build EXE
         run: pyinstaller BeerCount.spec
