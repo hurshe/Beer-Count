@@ -1,0 +1,176 @@
+"""
+database.py — SQLite backend for Beer Count HRC Warsaw
+"""
+import sqlite3, json, os
+
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "beer_count.db")
+
+DEFAULT_BEERS = [
+    {"name": "ŻYWIEC",   "keg": 30},
+    {"name": "HEINEKEN", "keg": 30},
+    {"name": "MURPHYS",  "keg": 30},
+    {"name": "BIAŁE",    "keg": 20},
+    {"name": "IPA",      "keg": 20},
+    {"name": "BIAŁE 0%", "keg": 20},
+]
+DEFAULT_SIZES = [
+    {"label": "0.3L", "liters": 0.3},
+    {"label": "0.5L", "liters": 0.5},
+    {"label": "1.5L", "liters": 1.5},
+]
+TARA = {20: 7, 30: 11, 50: 15}
+
+
+def get_conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY, value TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS day_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entry_date TEXT UNIQUE NOT NULL,
+        data_json  TEXT NOT NULL,
+        updated_at TEXT DEFAULT (datetime('now')))""")
+    if not conn.execute("SELECT 1 FROM settings WHERE key='beers'").fetchone():
+        conn.execute("INSERT INTO settings VALUES ('beers',?)", (json.dumps(DEFAULT_BEERS),))
+    if not conn.execute("SELECT 1 FROM settings WHERE key='sizes'").fetchone():
+        conn.execute("INSERT INTO settings VALUES ('sizes',?)", (json.dumps(DEFAULT_SIZES),))
+    conn.commit(); conn.close()
+
+
+# ── Settings ──────────────────────────────────────
+def get_beers():
+    conn = get_conn()
+    row = conn.execute("SELECT value FROM settings WHERE key='beers'").fetchone()
+    conn.close()
+    return json.loads(row["value"]) if row else DEFAULT_BEERS
+
+def save_beers(beers):
+    conn = get_conn()
+    conn.execute("INSERT OR REPLACE INTO settings VALUES ('beers',?)", (json.dumps(beers),))
+    conn.commit(); conn.close()
+
+def get_sizes():
+    conn = get_conn()
+    row = conn.execute("SELECT value FROM settings WHERE key='sizes'").fetchone()
+    conn.close()
+    return json.loads(row["value"]) if row else DEFAULT_SIZES
+
+def save_sizes(sizes):
+    conn = get_conn()
+    conn.execute("INSERT OR REPLACE INTO settings VALUES ('sizes',?)", (json.dumps(sizes),))
+    conn.commit(); conn.close()
+
+
+# ── Day entries ───────────────────────────────────
+def save_day(entry_date: str, data: dict):
+    conn = get_conn()
+    conn.execute("""INSERT INTO day_entries (entry_date, data_json, updated_at)
+        VALUES (?,?,datetime('now'))
+        ON CONFLICT(entry_date) DO UPDATE SET
+            data_json=excluded.data_json,
+            updated_at=datetime('now')""",
+        (entry_date, json.dumps(data)))
+    conn.commit(); conn.close()
+
+def load_day(entry_date: str):
+    conn = get_conn()
+    row = conn.execute("SELECT data_json FROM day_entries WHERE entry_date=?",
+                       (entry_date,)).fetchone()
+    conn.close()
+    return json.loads(row["data_json"]) if row else None
+
+def get_prev_day(entry_date: str):
+    """Return the last saved entry before entry_date."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT data_json FROM day_entries WHERE entry_date<? ORDER BY entry_date DESC LIMIT 1",
+        (entry_date,)).fetchone()
+    conn.close()
+    return json.loads(row["data_json"]) if row else None
+
+def get_months():
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT DISTINCT substr(entry_date,1,7) AS m FROM day_entries ORDER BY m DESC"
+    ).fetchall()
+    conn.close()
+    return [r["m"] for r in rows]
+
+def get_days_for_month(month: str):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT entry_date, data_json FROM day_entries WHERE entry_date LIKE ? ORDER BY entry_date ASC",
+        (month+"%",)).fetchall()
+    conn.close()
+    return [(r["entry_date"], json.loads(r["data_json"])) for r in rows]
+
+def get_all_days():
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT entry_date, data_json FROM day_entries ORDER BY entry_date ASC"
+    ).fetchall()
+    conn.close()
+    return [(r["entry_date"], json.loads(r["data_json"])) for r in rows]
+
+def delete_day(entry_date: str):
+    conn = get_conn()
+    conn.execute("DELETE FROM day_entries WHERE entry_date=?", (entry_date,))
+    conn.commit(); conn.close()
+
+
+# ── Calc helpers ──────────────────────────────────
+def keg_end_liters(keg_data: dict) -> float:
+    tara = TARA.get(int(keg_data.get("keg", 20)), 7)
+    full = int(keg_data.get("full_end", 0) or 0) * int(keg_data.get("keg", 20))
+    open_l = sum(
+        max(float(w) - tara, 0)
+        for w in (keg_data.get("open_end") or [])
+        if w not in (None, "", 0, "0")
+    )
+    return round(full + open_l, 3)
+
+def keg_start_liters(keg_data: dict) -> float:
+    """Start comes from prev day end — stored in 'start_l' field."""
+    return float(keg_data.get("start_l", 0) or 0)
+
+def keg_delivery_liters(keg_data: dict) -> float:
+    return int(keg_data.get("delivery", 0) or 0) * int(keg_data.get("keg", 20))
+
+def pos_liters(pos_entry: dict) -> float:
+    return sum(
+        float(sz.get("qty", 0) or 0) * float(sz.get("liters", 0))
+        for sz in (pos_entry.get("sizes") or [])
+    )
+
+def corr_liters(corr: dict) -> float:
+    return (float(corr.get("spill", 0) or 0) +
+            float(corr.get("void_", 0) or 0) +
+            float(corr.get("open_bar", 0) or 0))
+
+def calc_diff(keg_data, pos_entry, corr_data) -> float:
+    """
+    Różnica = END_faktyczny − (START + dostawa − POS − korekty)
+    + = zostało więcej niż powinno (niedolewanie / sprzedaż poza POS)
+    - = zostało mniej niż powinno (spille / straty)
+    """
+    end_fact  = keg_end_liters(keg_data)
+    start     = keg_start_liters(keg_data)
+    delivery  = keg_delivery_liters(keg_data)
+    pos       = pos_liters(pos_entry)
+    corr      = corr_liters(corr_data)
+    theoretical_end = start + delivery - pos - corr
+    return round(end_fact - theoretical_end, 3)
+
+def diff_status(diff: float) -> str:
+    """Returns: ok / warn / over / bad"""
+    if -2 <= diff <= 2:   return "ok"
+    if 2  < diff <= 5:    return "warn"
+    if diff > 5:          return "over"
+    return "bad"  # diff < -2
