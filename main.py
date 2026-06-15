@@ -61,9 +61,15 @@ class App(ctk.CTk):
         self._content.pack(fill="both", expand=True)
 
         self._tabs = {}
+        self._tab_outers = {}
         for key in ("wizard","entry","history","report","settings"):
-            f = ctk.CTkScrollableFrame(self._content, fg_color=BG, corner_radius=0)
-            self._tabs[key] = f
+            # Outer plain CTkFrame handles show/hide — no canvas glitches on Windows.
+            # Inner CTkScrollableFrame stays always-packed and is never pack_forget()'d.
+            outer = ctk.CTkFrame(self._content, fg_color=BG, corner_radius=0)
+            self._tab_outers[key] = outer
+            inner = ctk.CTkScrollableFrame(outer, fg_color=BG, corner_radius=0)
+            inner.pack(fill="both", expand=True)
+            self._tabs[key] = inner
 
         self._build_entry()
         self._build_history()
@@ -148,9 +154,11 @@ class App(ctk.CTk):
             self._tab_cache[key] = True
 
     def _show_tab_instant(self, key):
-        for f in self._tabs.values():
-            f.pack_forget()
-        self._tabs[key].pack(fill="both", expand=True)
+        for k, outer in self._tab_outers.items():
+            if k == key:
+                outer.pack(fill="both", expand=True)
+            else:
+                outer.pack_forget()
 
     # ══════════════════════════════════════════════
     #  WIZARD — First run setup
