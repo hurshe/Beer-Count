@@ -12,10 +12,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python 3.11
+      - name: Setup Python 3.8
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.8'
 
       - name: Install dependencies
         run: |
@@ -23,14 +23,14 @@ jobs:
           pip install customtkinter==5.2.2
           pip install openpyxl==3.1.2
           pip install pillow
-          pip install pyinstaller==6.3.0
+          pip install pyinstaller==5.13.2
 
-      - name: Build EXE
+      - name: Build folder
         run: pyinstaller BeerCount.spec
 
-      - name: Upload EXE
+      - name: Upload folder as artifact
         uses: actions/upload-artifact@v4
         with:
           name: BeerCount_HRC_Windows
-          path: dist/BeerCount_HRC.exe
+          path: dist/BeerCount_HRC/
           retention-days: 30
