@@ -1,5 +1,4 @@
 # -*- mode: python ; coding: utf-8 -*-
-import os, sys
 
 a = Analysis(
     ['main.py'],
@@ -7,38 +6,23 @@ a = Analysis(
     binaries=[],
     datas=[('icon.ico', '.')],
     hiddenimports=[
-        'customtkinter',
-        'customtkinter.windows',
-        'customtkinter.windows.widgets',
-        'customtkinter.windows.widgets.appearance_mode',
-        'customtkinter.windows.widgets.color_manager',
-        'customtkinter.windows.widgets.font',
-        'customtkinter.windows.widgets.image',
-        'customtkinter.windows.widgets.scaling',
-        'customtkinter.windows.widgets.theme',
-        'customtkinter.windows.widgets.utility',
+        'PyQt6',
+        'PyQt6.QtCore',
+        'PyQt6.QtGui',
+        'PyQt6.QtWidgets',
+        'PyQt6.sip',
         'openpyxl',
         'openpyxl.styles',
         'openpyxl.utils',
         'sqlite3',
         '_sqlite3',
-        'tkinter',
-        'tkinter.messagebox',
-        'tkinter.filedialog',
-        'PIL',
-        'PIL.Image',
-        'PIL.ImageTk',
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['customtkinter', 'tkinter'],
     noarchive=False,
 )
-
-import customtkinter
-ctk_dir = os.path.dirname(customtkinter.__file__)
-a.datas += Tree(ctk_dir, prefix='customtkinter', excludes=['*.pyc'])
 
 pyz = PYZ(a.pure)
 
