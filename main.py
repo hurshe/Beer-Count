@@ -143,7 +143,9 @@ class App(ctk.CTk):
                 b.configure(fg_color=SURFACE, text_color=MUTED,
                              font=("Segoe UI", 11))
         self._show_tab_instant(key)
-        getattr(self, f"_load_{key}")()
+        if key not in self._tab_cache:
+            getattr(self, f"_load_{key}")()
+            self._tab_cache[key] = True
 
     def _show_tab_instant(self, key):
         for f in self._tabs.values():
@@ -425,6 +427,7 @@ class App(ctk.CTk):
         self._kw = []
         self._pw = []
         self._cw = []
+        self._sum_row_labels = []
 
     def _load_entry(self):
         beers = db.get_beers()
@@ -432,6 +435,7 @@ class App(ctk.CTk):
         self._build_keg_inputs(beers)
         self._build_pos_inputs(beers, sizes)
         self._build_corr_inputs(beers)
+        self._build_summary(beers)
         self._load_prev_starts()
         self._recalc()
 
@@ -540,9 +544,56 @@ class App(ctk.CTk):
             cv["lbl"] = lbl; cv["name"] = beer["name"]
             self._cw.append(cv)
 
+    def _build_summary(self, beers):
+        """Create summary rows once; _render_summary() only updates text/colors."""
+        f = self._sum_frame
+        for w in f.winfo_children():
+            w.destroy()
+        self._sum_row_labels = []
+
+        for beer in beers:
+            row = ctk.CTkFrame(f, fg_color=SURFACE, corner_radius=6,
+                               border_width=1, border_color=BORDER)
+            row.pack(fill="x", pady=2)
+            ctk.CTkLabel(row, text=beer["name"],
+                         font=("Segoe UI", 11, "bold"),
+                         width=100, anchor="w").pack(side="left", padx=12, pady=6)
+            detail = {}
+            for key in ("START", "Del", "END", "POS", "Kor"):
+                lbl = ctk.CTkLabel(row, text=f"{key}: —",
+                                   font=("Segoe UI", 10), text_color=MUTED)
+                lbl.pack(side="left", padx=8)
+                detail[key] = lbl
+            chip = ctk.CTkFrame(row, fg_color=GREEN_BG, corner_radius=10)
+            chip.pack(side="right", padx=12, pady=6)
+            chip_lbl = ctk.CTkLabel(chip, text="—",
+                                    font=("Segoe UI", 11, "bold"), text_color=GREEN)
+            chip_lbl.pack(padx=4, pady=2)
+            self._sum_row_labels.append({"detail": detail, "chip": chip, "chip_lbl": chip_lbl})
+
+        tot = ctk.CTkFrame(f, fg_color=GOLD_BG, corner_radius=6,
+                           border_width=1, border_color=GOLD_LT)
+        tot.pack(fill="x", pady=(6, 0))
+        ctk.CTkLabel(tot, text="ŁĄCZNIE",
+                     font=("Segoe UI", 12, "bold"),
+                     text_color=GOLD).pack(side="left", padx=14, pady=8)
+        self._sum_pos_lbl = ctk.CTkLabel(tot, text="POS: —",
+                                         font=("Segoe UI", 11), text_color=MUTED)
+        self._sum_pos_lbl.pack(side="left", padx=12)
+        self._sum_tot_chip = ctk.CTkFrame(tot, fg_color=GREEN_BG, corner_radius=10)
+        self._sum_tot_chip.pack(side="right", padx=14, pady=8)
+        self._sum_tot_lbl = ctk.CTkLabel(self._sum_tot_chip, text="—",
+                                         font=("Segoe UI", 13, "bold"), text_color=GREEN)
+        self._sum_tot_lbl.pack(padx=6, pady=3)
+
     def _load_prev_starts(self, *_):
         d = self.ev_date.get().strip()
-        if not d: return
+        if len(d) != 10:
+            return
+        try:
+            datetime.strptime(d, "%Y-%m-%d")
+        except ValueError:
+            return
         prev = db.get_prev_day(d)
         if not prev: return
         prev_kegs = {k["name"]: db.keg_end_liters(k)
@@ -582,8 +633,10 @@ class App(ctk.CTk):
         return data
 
     def _recalc(self, *_):
-        try: data = self._collect()
-        except: return
+        try:
+            data = self._collect()
+        except Exception:
+            return
         for i, rw in enumerate(self._kw):
             end_l = db.keg_end_liters(data["kegs"][i])
             rw["end_lbl"].configure(text=f"{end_l:.2f} L")
@@ -601,65 +654,45 @@ class App(ctk.CTk):
         self._render_summary(data)
 
     def _render_summary(self, data):
-        f = self._sum_frame
-        for w in f.winfo_children(): w.destroy()
+        # Rebuild structure only if beer count changed (e.g. after settings save)
+        if not self._sum_row_labels or len(self._sum_row_labels) != len(data["kegs"]):
+            self._build_summary([{"name": k["name"]} for k in data["kegs"]])
+
         tot_diff = 0
         for i, keg in enumerate(data["kegs"]):
-            pe   = data["pos"][i]  if i < len(data["pos"])  else {"sizes":[]}
+            pe   = data["pos"][i]  if i < len(data["pos"])  else {"sizes": []}
             co   = data["corr"][i] if i < len(data["corr"]) else {}
             diff = db.calc_diff(keg, pe, co)
             s    = db.diff_status(diff)
             col, bg = DIFF_COLORS[s]
             tot_diff += diff
-            row = ctk.CTkFrame(f, fg_color=SURFACE, corner_radius=6,
-                               border_width=1, border_color=BORDER)
-            row.pack(fill="x", pady=2)
-            ctk.CTkLabel(row, text=keg["name"],
-                         font=("Segoe UI", 11, "bold"),
-                         width=100, anchor="w").pack(
-                side="left", padx=12, pady=6)
-            for lbl, val in [
-                ("START", f"{db.keg_start_liters(keg):.1f}L"),
-                ("Del",   f"+{db.keg_delivery_liters(keg):.0f}L"),
-                ("END",   f"{db.keg_end_liters(keg):.1f}L"),
-                ("POS",   f"{db.pos_liters(pe):.1f}L"),
-                ("Kor",   f"−{db.corr_liters(co):.1f}L"),
-            ]:
-                ctk.CTkLabel(row, text=f"{lbl}: {val}",
-                             font=("Segoe UI", 10),
-                             text_color=MUTED).pack(side="left", padx=8)
-            chip = ctk.CTkFrame(row, fg_color=bg, corner_radius=10)
-            chip.pack(side="right", padx=12, pady=6)
-            ctk.CTkLabel(chip,
-                         text=f"  {DIFF_ICONS[s]} {diff:+.2f}L  ",
-                         font=("Segoe UI", 11, "bold"),
-                         text_color=col).pack(padx=4, pady=2)
+            refs = self._sum_row_labels[i]
+            refs["detail"]["START"].configure(text=f"START: {db.keg_start_liters(keg):.1f}L")
+            refs["detail"]["Del"].configure(text=f"Del: +{db.keg_delivery_liters(keg):.0f}L")
+            refs["detail"]["END"].configure(text=f"END: {db.keg_end_liters(keg):.1f}L")
+            refs["detail"]["POS"].configure(text=f"POS: {db.pos_liters(pe):.1f}L")
+            refs["detail"]["Kor"].configure(text=f"Kor: −{db.corr_liters(co):.1f}L")
+            refs["chip"].configure(fg_color=bg)
+            refs["chip_lbl"].configure(
+                text=f"  {DIFF_ICONS[s]} {diff:+.2f}L  ", text_color=col)
 
         ts = db.diff_status(tot_diff)
         tcol, tbg = DIFF_COLORS[ts]
-        tot = ctk.CTkFrame(f, fg_color=GOLD_BG, corner_radius=6,
-                           border_width=1, border_color=GOLD_LT)
-        tot.pack(fill="x", pady=(6, 0))
-        ctk.CTkLabel(tot, text="ŁĄCZNIE",
-                     font=("Segoe UI", 12, "bold"),
-                     text_color=GOLD).pack(side="left", padx=14, pady=8)
-        ctk.CTkLabel(
-            tot,
-            text=f"POS: {sum(db.pos_liters(p) for p in data['pos']):.1f}L",
-            font=("Segoe UI", 11), text_color=MUTED).pack(
-            side="left", padx=12)
-        chip = ctk.CTkFrame(tot, fg_color=tbg, corner_radius=10)
-        chip.pack(side="right", padx=14, pady=8)
-        ctk.CTkLabel(chip,
-                     text=f"  {DIFF_ICONS[ts]} {tot_diff:+.2f}L  ",
-                     font=("Segoe UI", 13, "bold"),
-                     text_color=tcol).pack(padx=6, pady=3)
+        pos_total = sum(db.pos_liters(p) for p in data["pos"])
+        self._sum_pos_lbl.configure(text=f"POS: {pos_total:.1f}L")
+        self._sum_tot_chip.configure(fg_color=tbg)
+        self._sum_tot_lbl.configure(
+            text=f"  {DIFF_ICONS[ts]} {tot_diff:+.2f}L  ", text_color=tcol)
 
     def _save_day(self):
         d = self.ev_date.get().strip()
-        if not d: messagebox.showerror("Błąd","Wpisz datę!"); return
+        if not d:
+            messagebox.showerror("Błąd", "Wpisz datę!")
+            return
         data = self._collect()
         db.save_day(d, data)
+        self._tab_cache.pop("history", None)
+        self._tab_cache.pop("report", None)
         messagebox.showinfo("Zapisano", f"Dzień {d} zapisany ✓")
 
     def _clear(self):
@@ -1100,7 +1133,7 @@ class App(ctk.CTk):
                           font=("Segoe UI", 11), fg_color=RED_BG,
                           text_color=RED, hover_color="#f5c0c0",
                           command=lambda r=row: r.destroy()).pack(side="left")
-            self._beer_rows.append((nv, kv))
+            self._beer_rows.append((nv, kv, row))
 
     def _render_size_settings(self, sizes):
         for w in self._set_sizes_f.winfo_children(): w.destroy()
@@ -1120,7 +1153,7 @@ class App(ctk.CTk):
                           font=("Segoe UI", 11), fg_color=RED_BG,
                           text_color=RED, hover_color="#f5c0c0",
                           command=lambda r=row: r.destroy()).pack(side="left")
-            self._size_rows.append((lv, lv2))
+            self._size_rows.append((lv, lv2, row))
 
     def _add_beer(self):
         current = db.get_beers()
@@ -1133,23 +1166,32 @@ class App(ctk.CTk):
         self._render_size_settings(current)
 
     def _save_settings(self):
-        beers, sizes = [], []
-        for row in self._set_beers_f.winfo_children():
-            ws = row.winfo_children()
+        beers = []
+        for nv, kv, row in self._beer_rows:
+            if not row.winfo_exists():
+                continue
             try:
-                name = ws[0].get().strip().upper()
-                keg  = int(ws[1].get())
-                if name: beers.append({"name":name,"keg":keg})
-            except: pass
-        for row in self._set_sizes_f.winfo_children():
-            ws = row.winfo_children()
+                name = nv.get().strip().upper()
+                keg  = int(kv.get())
+                if name:
+                    beers.append({"name": name, "keg": keg})
+            except (ValueError, TypeError):
+                pass
+        sizes = []
+        for lv, lv2, row in self._size_rows:
+            if not row.winfo_exists():
+                continue
             try:
-                lbl = ws[0].get().strip()
-                lit = float(ws[1].get())
-                if lbl: sizes.append({"label":lbl,"liters":lit})
-            except: pass
-        db.save_beers(beers); db.save_sizes(sizes)
-        messagebox.showinfo("Zapisano","Ustawienia zapisane ✓")
+                lbl = lv.get().strip()
+                lit = float(lv2.get())
+                if lbl:
+                    sizes.append({"label": lbl, "liters": lit})
+            except (ValueError, TypeError):
+                pass
+        db.save_beers(beers)
+        db.save_sizes(sizes)
+        self._tab_cache.pop("entry", None)
+        messagebox.showinfo("Zapisano", "Ustawienia zapisane ✓")
 
     def _rerun_wizard(self):
         self._build_wizard()

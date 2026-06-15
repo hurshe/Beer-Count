@@ -46,13 +46,14 @@ def _diff_label(diff):
 def export_month(month: str, filepath: str) -> bool:
     entries = db.get_days_for_month(month)
     if not entries: return False
+    sizes = db.get_sizes()  # fetch once for all day sheets
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
     ws = wb.create_sheet("📊 Podsumowanie")
     _write_summary(ws, month, entries)
     for entry_date, data in entries:
         ws2 = wb.create_sheet(f"Dzień {entry_date[8:]}")
-        _write_day(ws2, entry_date, data)
+        _write_day(ws2, entry_date, data, sizes)
     wb.save(filepath)
     return True
 
@@ -60,6 +61,7 @@ def export_month(month: str, filepath: str) -> bool:
 def export_year(year: str, filepath: str) -> bool:
     all_days = [(d, data) for d, data in db.get_all_days() if d.startswith(year)]
     if not all_days: return False
+    sizes = db.get_sizes()  # fetch once for all day sheets
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
     ws_ann = wb.create_sheet(f"📅 Rok {year}")
@@ -74,9 +76,8 @@ def export_year(year: str, filepath: str) -> bool:
 
 
 # ── Sheet writers ─────────────────────────────────
-def _write_day(ws, entry_date, data):
+def _write_day(ws, entry_date, data, sizes):
     beers = data.get("kegs", [])
-    sizes = db.get_sizes()
 
     ws["A1"] = f"Beer Count — {entry_date}"
     ws["A1"].font = Font(bold=True, size=13, color=GOLD)

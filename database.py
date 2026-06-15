@@ -20,11 +20,17 @@ DEFAULT_SIZES = [
 ]
 TARA = {20: 7, 30: 11, 50: 15}
 
+# Single persistent connection — opened once, reused for all calls.
+# SQLite is single-threaded in tkinter apps, so this is safe.
+_conn = None
+
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    global _conn
+    if _conn is None:
+        _conn = sqlite3.connect(DB_PATH)
+        _conn.row_factory = sqlite3.Row
+    return _conn
 
 
 def init_db():
@@ -37,35 +43,32 @@ def init_db():
         entry_date TEXT UNIQUE NOT NULL,
         data_json  TEXT NOT NULL,
         updated_at TEXT DEFAULT (datetime('now')))""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_day_date ON day_entries(entry_date)")
     if not conn.execute("SELECT 1 FROM settings WHERE key='beers'").fetchone():
         conn.execute("INSERT INTO settings VALUES ('beers',?)", (json.dumps(DEFAULT_BEERS),))
     if not conn.execute("SELECT 1 FROM settings WHERE key='sizes'").fetchone():
         conn.execute("INSERT INTO settings VALUES ('sizes',?)", (json.dumps(DEFAULT_SIZES),))
-    conn.commit(); conn.close()
+    conn.commit()
 
 
 # ── Settings ──────────────────────────────────────
 def get_beers():
-    conn = get_conn()
-    row = conn.execute("SELECT value FROM settings WHERE key='beers'").fetchone()
-    conn.close()
+    row = get_conn().execute("SELECT value FROM settings WHERE key='beers'").fetchone()
     return json.loads(row["value"]) if row else DEFAULT_BEERS
 
 def save_beers(beers):
     conn = get_conn()
     conn.execute("INSERT OR REPLACE INTO settings VALUES ('beers',?)", (json.dumps(beers),))
-    conn.commit(); conn.close()
+    conn.commit()
 
 def get_sizes():
-    conn = get_conn()
-    row = conn.execute("SELECT value FROM settings WHERE key='sizes'").fetchone()
-    conn.close()
+    row = get_conn().execute("SELECT value FROM settings WHERE key='sizes'").fetchone()
     return json.loads(row["value"]) if row else DEFAULT_SIZES
 
 def save_sizes(sizes):
     conn = get_conn()
     conn.execute("INSERT OR REPLACE INTO settings VALUES ('sizes',?)", (json.dumps(sizes),))
-    conn.commit(); conn.close()
+    conn.commit()
 
 
 # ── Day entries ───────────────────────────────────
@@ -77,52 +80,45 @@ def save_day(entry_date: str, data: dict):
             data_json=excluded.data_json,
             updated_at=datetime('now')""",
         (entry_date, json.dumps(data)))
-    conn.commit(); conn.close()
+    conn.commit()
 
 def load_day(entry_date: str):
-    conn = get_conn()
-    row = conn.execute("SELECT data_json FROM day_entries WHERE entry_date=?",
-                       (entry_date,)).fetchone()
-    conn.close()
+    row = get_conn().execute(
+        "SELECT data_json FROM day_entries WHERE entry_date=?", (entry_date,)
+    ).fetchone()
     return json.loads(row["data_json"]) if row else None
 
 def get_prev_day(entry_date: str):
     """Return the last saved entry before entry_date."""
-    conn = get_conn()
-    row = conn.execute(
+    row = get_conn().execute(
         "SELECT data_json FROM day_entries WHERE entry_date<? ORDER BY entry_date DESC LIMIT 1",
-        (entry_date,)).fetchone()
-    conn.close()
+        (entry_date,)
+    ).fetchone()
     return json.loads(row["data_json"]) if row else None
 
 def get_months():
-    conn = get_conn()
-    rows = conn.execute(
+    rows = get_conn().execute(
         "SELECT DISTINCT substr(entry_date,1,7) AS m FROM day_entries ORDER BY m DESC"
     ).fetchall()
-    conn.close()
     return [r["m"] for r in rows]
 
 def get_days_for_month(month: str):
-    conn = get_conn()
-    rows = conn.execute(
+    rows = get_conn().execute(
         "SELECT entry_date, data_json FROM day_entries WHERE entry_date LIKE ? ORDER BY entry_date ASC",
-        (month+"%",)).fetchall()
-    conn.close()
+        (month + "%",)
+    ).fetchall()
     return [(r["entry_date"], json.loads(r["data_json"])) for r in rows]
 
 def get_all_days():
-    conn = get_conn()
-    rows = conn.execute(
+    rows = get_conn().execute(
         "SELECT entry_date, data_json FROM day_entries ORDER BY entry_date ASC"
     ).fetchall()
-    conn.close()
     return [(r["entry_date"], json.loads(r["data_json"])) for r in rows]
 
 def delete_day(entry_date: str):
     conn = get_conn()
     conn.execute("DELETE FROM day_entries WHERE entry_date=?", (entry_date,))
-    conn.commit(); conn.close()
+    conn.commit()
 
 
 # ── Calc helpers ──────────────────────────────────
@@ -160,17 +156,17 @@ def calc_diff(keg_data, pos_entry, corr_data) -> float:
     + = zostało więcej niż powinno (niedolewanie / sprzedaż poza POS)
     - = zostało mniej niż powinno (spille / straty)
     """
-    end_fact  = keg_end_liters(keg_data)
-    start     = keg_start_liters(keg_data)
-    delivery  = keg_delivery_liters(keg_data)
-    pos       = pos_liters(pos_entry)
-    corr      = corr_liters(corr_data)
+    end_fact        = keg_end_liters(keg_data)
+    start           = keg_start_liters(keg_data)
+    delivery        = keg_delivery_liters(keg_data)
+    pos             = pos_liters(pos_entry)
+    corr            = corr_liters(corr_data)
     theoretical_end = start + delivery - pos - corr
     return round(end_fact - theoretical_end, 3)
 
 def diff_status(diff: float) -> str:
     """Returns: ok / warn / over / bad"""
-    if -2 <= diff <= 2:   return "ok"
-    if 2  < diff <= 5:    return "warn"
-    if diff > 5:          return "over"
-    return "bad"  # diff < -2
+    if -2 <= diff <= 2: return "ok"
+    if 2  < diff <= 5:  return "warn"
+    if diff > 5:        return "over"
+    return "bad"
