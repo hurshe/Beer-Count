@@ -1,11 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
+
+# Collect all PyQt6 files (Qt DLLs, platform plugins, translations, etc.)
+pyqt6_datas, pyqt6_binaries, pyqt6_hiddenimports = collect_all('PyQt6')
 
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[],
-    datas=[('icon.ico', '.')],
-    hiddenimports=[
+    binaries=pyqt6_binaries,
+    datas=[('icon.ico', '.')] + pyqt6_datas,
+    hiddenimports=pyqt6_hiddenimports + [
         'PyQt6',
         'PyQt6.QtCore',
         'PyQt6.QtGui',
@@ -20,7 +24,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['customtkinter', 'tkinter'],
+    excludes=['customtkinter', 'tkinter', '_tkinter'],
     noarchive=False,
 )
 
