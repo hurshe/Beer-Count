@@ -6,11 +6,15 @@ main.py — Beer Count HRC Warsaw v4
 - Fixed history crash
 - Fixed settings add/remove
 """
+import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox, filedialog
 import database as db
 import export_excel as xl
 from datetime import date, timedelta, datetime
+
+ctk.set_appearance_mode("light")
+ctk.set_default_color_theme("blue")
 
 GOLD    = "#9a6f1e"; GOLD_LT  = "#c9a84c"; GOLD_BG  = "#fdf3df"
 GREEN   = "#2a7a45"; GREEN_BG = "#eaf6ee"
@@ -300,6 +304,12 @@ class App(tk.Tk):
     def _save_wizard(self):
         d = self._wiz_date.get().strip()
         if not d: messagebox.showerror("Błąd","Wpisz datę!"); return
+        # Validate date format
+        try:
+            datetime.strptime(d, "%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror("Błąd","Nieprawidłowy format daty. Użyj: RRRR-MM-DD")
+            return
         sizes = db.get_sizes()
         beers = db.get_beers()
         data = {
@@ -320,10 +330,12 @@ class App(tk.Tk):
                 "full_end": rv["full"].get() or "0",
                 "open_end": [v.get() or None for v in rv["open"]],
             })
+        # Save ONLY the date the user entered — never today automatically
         db.save_day(d, data)
         messagebox.showinfo("Zapisano",
             f"Stan początkowy na {d} zapisany ✓\n\n"
-            "Możesz teraz zacząć wpisywać codzienne dane!")
+            "Możesz teraz zacząć wpisywać codzienne dane!\n"
+            "Jutro przy wpisie dnia START uzupełni się automatycznie.")
         self.show_tab("entry")
 
     def _is_float(self, s):
@@ -827,6 +839,16 @@ class App(tk.Tk):
         det_btn.pack(side="left", padx=(0,8))
         make_btn(btn_f, "✏️ Edytuj",
                  lambda e=entry_date, d=data: self._open_edit(e, d),
+                 font=("Segoe UI",9), padx=8, pady=3).pack(side="left", padx=(0,8))
+
+        def delete_day(e=entry_date, c=card):
+            if messagebox.askyesno("Usuń wpis",
+                f"Na pewno usunąć wpis z dnia {e}?\nTej operacji nie można cofnąć."):
+                db.delete_day(e)
+                c.destroy()
+
+        make_btn(btn_f, "🗑 Usuń dzień", delete_day,
+                 bg=RED_BG, fg=RED,
                  font=("Segoe UI",9), padx=8, pady=3).pack(side="left")
 
     def _build_det_table(self, parent, data):
@@ -880,35 +902,49 @@ class App(tk.Tk):
                          relief="flat").pack(side="left", padx=1, pady=1)
 
     def _open_edit(self, entry_date, data):
+        # Switch to entry tab first
+        self.show_tab("entry")
+        # Set date
         self.ev_date.set(entry_date)
+        # Rebuild inputs fresh
         beers = db.get_beers(); sizes = db.get_sizes()
         self._build_keg_inputs(beers)
         self._build_pos_inputs(beers, sizes)
         self._build_corr_inputs(beers)
+        # Fill keg values
         for i, rw in enumerate(self._kw):
             if i >= len(data.get("kegs",[])): continue
             keg = data["kegs"][i]
             rw["_start_l"] = float(keg.get("start_l",0) or 0)
             rw["start_lbl"].configure(text=f"{rw['_start_l']:.1f}L")
-            rw["delivery"].set(str(keg.get("delivery","") or ""))
-            rw["full_end"].set(str(keg.get("full_end","") or ""))
+            # delivery
+            del_val = keg.get("delivery","")
+            rw["delivery"].set("" if not del_val or del_val == "0" else str(del_val))
+            # full_end
+            full_val = keg.get("full_end","")
+            rw["full_end"].set("" if not full_val or full_val == "0" else str(full_val))
+            # open weights
             ow = keg.get("open_end") or [None,None,None]
             for j, v in enumerate(rw["open_end"]):
                 v.set(str(ow[j]) if j<len(ow) and ow[j] else "")
+        # Fill POS values
         for i, pw in enumerate(self._pw):
             if i >= len(data.get("pos",[])): continue
             pe = data["pos"][i]
             for j, sv in enumerate(pw["sizes"]):
                 if j < len(pe.get("sizes",[])):
-                    sv["var"].set(str(pe["sizes"][j].get("qty","") or ""))
+                    qty = pe["sizes"][j].get("qty","")
+                    sv["var"].set("" if not qty or qty == "0" else str(qty))
+        # Fill correction values
         for i, cw in enumerate(self._cw):
             if i >= len(data.get("corr",[])): continue
             co = data["corr"][i]
-            cw["spill"].set(str(co.get("spill","") or ""))
-            cw["void_"].set(str(co.get("void_","") or ""))
-            cw["open_bar"].set(str(co.get("open_bar","") or ""))
+            for field in ["spill","void_","open_bar"]:
+                val = co.get(field,"")
+                cw[field].set("" if not val or val == "0" else str(val))
+        # Force UI update then recalc
+        self.update_idletasks()
         self._recalc()
-        self.show_tab("entry")
 
     # ══════════════════════════════════════════════
     #  REPORT
