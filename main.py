@@ -6,15 +6,11 @@ main.py — Beer Count HRC Warsaw v4
 - Fixed history crash
 - Fixed settings add/remove
 """
-import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox, filedialog
 import database as db
 import export_excel as xl
 from datetime import date, timedelta, datetime
-
-ctk.set_appearance_mode("light")
-ctk.set_default_color_theme("blue")
 
 GOLD    = "#9a6f1e"; GOLD_LT  = "#c9a84c"; GOLD_BG  = "#fdf3df"
 GREEN   = "#2a7a45"; GREEN_BG = "#eaf6ee"
