@@ -6,15 +6,11 @@ main.py — Beer Count HRC Warsaw v4
 - Fixed history crash
 - Fixed settings add/remove
 """
-import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox, filedialog
 import database as db
 import export_excel as xl
 from datetime import date, timedelta, datetime
-
-ctk.set_appearance_mode("light")
-ctk.set_default_color_theme("blue")
 
 GOLD    = "#9a6f1e"; GOLD_LT  = "#c9a84c"; GOLD_BG  = "#fdf3df"
 GREEN   = "#2a7a45"; GREEN_BG = "#eaf6ee"
@@ -389,7 +385,7 @@ class App(tk.Tk):
                  font=("Segoe UI",8), fg=MUTED,
                  bg=SURFACE).pack(anchor="w", pady=(0,4))
         self._kegs_frame = tk.Frame(self._kegs_card, bg=SURFACE)
-        self._kegs_frame.pack(anchor="w")
+        self._kegs_frame.pack(fill="both", expand=True)
 
         # Col 2: POS
         self._pos_card = self._card(cols, "💻  Sprzedaż POS",
@@ -401,7 +397,7 @@ class App(tk.Tk):
                                         bg=SURFACE, anchor="e")
         self._pos_total_lbl.pack(fill="x", pady=(0,4))
         self._pos_frame = tk.Frame(self._pos_card, bg=SURFACE)
-        self._pos_frame.pack(anchor="w")
+        self._pos_frame.pack(fill="both", expand=True)
 
         # Col 3: Korekty
         self._corr_card = self._card(cols, "⚠️  Korekty",
@@ -413,7 +409,7 @@ class App(tk.Tk):
                                          bg=SURFACE, anchor="e")
         self._corr_total_lbl.pack(fill="x", pady=(0,4))
         self._corr_frame = tk.Frame(self._corr_card, bg=SURFACE)
-        self._corr_frame.pack(anchor="w")
+        self._corr_frame.pack(fill="both", expand=True)
 
         # Wynik dnia — full width below
         self._sum_card = self._card(f, "📊  Wynik dnia",
@@ -448,120 +444,135 @@ class App(tk.Tk):
     def _load_entry(self):
         beers = db.get_beers()
         sizes = db.get_sizes()
+        self._all_entries = []
         self._build_keg_inputs(beers)
         self._build_pos_inputs(beers, sizes)
         self._build_corr_inputs(beers)
+        self._init_summary_rows(beers)
+        self._bind_enter_navigation()
         self._load_prev_starts()
         self._recalc()
+
+    def _bind_enter_navigation(self):
+        """Enter key moves focus to next entry field."""
+        entries = self._all_entries
+        for i, e in enumerate(entries):
+            next_e = entries[i+1] if i+1 < len(entries) else entries[0]
+            e.bind("<Return>", lambda ev, n=next_e: n.focus_set())
+            e.bind("<KP_Enter>", lambda ev, n=next_e: n.focus_set())
 
     def _build_keg_inputs(self, beers):
         f = self._kegs_frame
         for w in f.winfo_children(): w.destroy()
         self._kw = []
-        hdrs = ["Piwo","START","DOSTAWA","PEŁNE",
-                "kg#1","kg#2","kg#3","END(L)"]
-        ws   = [12,    9,      7,        6,
-                7,     7,      7,        7]
-        hf = tk.Frame(f, bg=GOLD_BG)
-        hf.pack(fill="x", pady=(0,2))
-        for h, w in zip(hdrs, ws):
-            tk.Label(hf, text=h, font=("Segoe UI",8,"bold"),
-                     fg=GOLD, bg=GOLD_BG, width=w,
-                     anchor="center").pack(side="left", padx=2, pady=3)
-        for beer in beers:
+        self._all_entries = []  # flat list for Enter navigation
+
+        hdrs = ["Piwo","START","DOSTAWA","PEŁNE","kg#1","kg#2","kg#3","END(L)"]
+        for ci, h in enumerate(hdrs):
+            tk.Label(f, text=h, font=("Segoe UI",8,"bold"),
+                     fg=GOLD, bg=GOLD_BG, anchor="center").grid(
+                row=0, column=ci, sticky="ew", padx=2, pady=3, ipadx=4)
+        # Make all columns stretch equally
+        for ci in range(len(hdrs)):
+            f.grid_columnconfigure(ci, weight=1)
+
+        for ri, beer in enumerate(beers, 1):
             rv = {"beer": beer, "_start_l": 0.0}
-            rf = tk.Frame(f, bg=SURFACE)
-            rf.pack(fill="x", pady=1)
-            tk.Label(rf, text=f"{beer['name']}\n({beer['keg']}L)",
-                     font=("Segoe UI",9,"bold"), fg=TEXT, bg=SURFACE,
-                     width=12, anchor="w").pack(side="left", padx=2)
-            rv["start_lbl"] = tk.Label(rf, text="—",
+            tk.Label(f, text=f"{beer['name']} ({beer['keg']}L)",
+                     font=("Segoe UI",9,"bold"), fg=TEXT,
+                     bg=SURFACE, anchor="w").grid(
+                row=ri, column=0, sticky="ew", padx=2, pady=2)
+            rv["start_lbl"] = tk.Label(f, text="—",
                                         font=("Consolas",9), fg=GOLD,
-                                        bg=PREV_BG, width=9, anchor="center",
-                                        relief="flat")
-            rv["start_lbl"].pack(side="left", padx=2)
+                                        bg=PREV_BG, anchor="center")
+            rv["start_lbl"].grid(row=ri, column=1, sticky="ew", padx=2, pady=2)
+
             rv["delivery"] = tk.StringVar()
-            e = make_entry(rf, rv["delivery"], width=7, bg=GOLD_BG)
-            e.pack(side="left", padx=2)
-            e.bind("<KeyRelease>", lambda _: self._recalc())
+            e_del = make_entry(f, rv["delivery"], bg=GOLD_BG)
+            e_del.grid(row=ri, column=2, sticky="ew", padx=2, pady=2)
+            e_del.bind("<KeyRelease>", lambda _: self._recalc())
+            self._all_entries.append(e_del)
+
             rv["full_end"] = tk.StringVar()
-            e2 = make_entry(rf, rv["full_end"], width=6)
-            e2.pack(side="left", padx=2)
-            e2.bind("<KeyRelease>", lambda _: self._recalc())
+            e_full = make_entry(f, rv["full_end"])
+            e_full.grid(row=ri, column=3, sticky="ew", padx=2, pady=2)
+            e_full.bind("<KeyRelease>", lambda _: self._recalc())
+            self._all_entries.append(e_full)
+
             rv["open_end"] = []
-            for _ in range(3):
+            for j in range(3):
                 ov = tk.StringVar()
-                oe = make_entry(rf, ov, width=7)
-                oe.pack(side="left", padx=2)
+                oe = make_entry(f, ov)
+                oe.grid(row=ri, column=4+j, sticky="ew", padx=2, pady=2)
                 oe.bind("<KeyRelease>", lambda _: self._recalc())
+                self._all_entries.append(oe)
                 rv["open_end"].append(ov)
-            rv["end_lbl"] = tk.Label(rf, text="—",
+
+            rv["end_lbl"] = tk.Label(f, text="—",
                                       font=("Consolas",9,"bold"),
-                                      fg=GOLD, bg=SURFACE,
-                                      width=7, anchor="center")
-            rv["end_lbl"].pack(side="left", padx=2)
+                                      fg=GOLD, bg=SURFACE, anchor="center")
+            rv["end_lbl"].grid(row=ri, column=7, sticky="ew", padx=2, pady=2)
             self._kw.append(rv)
 
     def _build_pos_inputs(self, beers, sizes):
         f = self._pos_frame
         for w in f.winfo_children(): w.destroy()
         self._pw = []
-        hf = tk.Frame(f, bg=GOLD_BG)
-        hf.pack(fill="x", pady=(0,2))
-        tk.Label(hf, text="Piwo", font=("Segoe UI",8,"bold"),
-                 fg=GOLD, bg=GOLD_BG, width=10,
-                 anchor="w").pack(side="left", padx=2, pady=3)
-        for sz in sizes:
-            tk.Label(hf, text=sz["label"], font=("Segoe UI",8,"bold"),
-                     fg=GOLD, bg=GOLD_BG, width=7,
-                     anchor="center").pack(side="left", padx=2, pady=3)
-        tk.Label(hf, text="Razem", font=("Segoe UI",8,"bold"),
-                 fg=GOLD, bg=GOLD_BG, width=8,
-                 anchor="center").pack(side="left", padx=2, pady=3)
-        for beer in beers:
-            rf = tk.Frame(f, bg=SURFACE)
-            rf.pack(fill="x", pady=1)
-            tk.Label(rf, text=beer["name"], font=("Segoe UI",9,"bold"),
-                     fg=TEXT, bg=SURFACE, width=10,
-                     anchor="w").pack(side="left", padx=2)
+        # Header row
+        tk.Label(f, text="Piwo", font=("Segoe UI",8,"bold"),
+                 fg=GOLD, bg=GOLD_BG, anchor="w").grid(
+            row=0, column=0, sticky="ew", padx=2, pady=3, ipadx=4)
+        for si, sz in enumerate(sizes):
+            tk.Label(f, text=sz["label"], font=("Segoe UI",8,"bold"),
+                     fg=GOLD, bg=GOLD_BG, anchor="center").grid(
+                row=0, column=si+1, sticky="ew", padx=2, pady=3, ipadx=4)
+        tk.Label(f, text="Razem", font=("Segoe UI",8,"bold"),
+                 fg=GOLD, bg=GOLD_BG, anchor="center").grid(
+            row=0, column=len(sizes)+1, sticky="ew", padx=2, pady=3, ipadx=4)
+        for ci in range(len(sizes)+2):
+            f.grid_columnconfigure(ci, weight=1)
+        for ri, beer in enumerate(beers, 1):
+            tk.Label(f, text=beer["name"], font=("Segoe UI",9,"bold"),
+                     fg=TEXT, bg=SURFACE, anchor="w").grid(
+                row=ri, column=0, sticky="ew", padx=2, pady=2)
             svars = []
-            for sz in sizes:
+            for si, sz in enumerate(sizes):
                 sv = tk.StringVar()
-                e = make_entry(rf, sv, width=7)
-                e.pack(side="left", padx=2)
+                e = make_entry(f, sv)
+                e.grid(row=ri, column=si+1, sticky="ew", padx=2, pady=2)
                 e.bind("<KeyRelease>", lambda _: self._recalc())
+                self._all_entries.append(e)
                 svars.append({"var": sv, "liters": sz["liters"]})
-            lbl = tk.Label(rf, text="0.00L", font=("Consolas",9,"bold"),
-                           fg=GOLD, bg=SURFACE, width=8, anchor="center")
-            lbl.pack(side="left", padx=2)
+            lbl = tk.Label(f, text="0.00L", font=("Consolas",9,"bold"),
+                           fg=GOLD, bg=SURFACE, anchor="center")
+            lbl.grid(row=ri, column=len(sizes)+1, sticky="ew", padx=2, pady=2)
             self._pw.append({"name": beer["name"], "sizes": svars, "lbl": lbl})
 
     def _build_corr_inputs(self, beers):
         f = self._corr_frame
         for w in f.winfo_children(): w.destroy()
         self._cw = []
-        hf = tk.Frame(f, bg=GOLD_BG)
-        hf.pack(fill="x", pady=(0,2))
-        for h, w in [("Piwo",10),("Spill",7),("Void",7),("Open Bar",8),("Razem",8)]:
-            tk.Label(hf, text=h, font=("Segoe UI",8,"bold"),
-                     fg=GOLD, bg=GOLD_BG, width=w,
-                     anchor="center").pack(side="left", padx=2, pady=3)
-        for beer in beers:
-            rf = tk.Frame(f, bg=SURFACE)
-            rf.pack(fill="x", pady=1)
-            tk.Label(rf, text=beer["name"], font=("Segoe UI",9,"bold"),
-                     fg=TEXT, bg=SURFACE, width=10,
-                     anchor="w").pack(side="left", padx=2)
+        for ci, h in enumerate(["Piwo","Spill","Void","Open Bar","Razem"]):
+            tk.Label(f, text=h, font=("Segoe UI",8,"bold"),
+                     fg=GOLD, bg=GOLD_BG, anchor="center").grid(
+                row=0, column=ci, sticky="ew", padx=2, pady=3, ipadx=4)
+        for ci in range(5):
+            f.grid_columnconfigure(ci, weight=1)
+        for ri, beer in enumerate(beers, 1):
+            tk.Label(f, text=beer["name"], font=("Segoe UI",9,"bold"),
+                     fg=TEXT, bg=SURFACE, anchor="w").grid(
+                row=ri, column=0, sticky="ew", padx=2, pady=2)
             cv = {"name": beer["name"]}
-            for field, w in [("spill",7),("void_",7),("open_bar",8)]:
+            for ci, field in enumerate(["spill","void_","open_bar"], 1):
                 v = tk.StringVar()
-                e = make_entry(rf, v, width=w)
-                e.pack(side="left", padx=2)
+                e = make_entry(f, v)
+                e.grid(row=ri, column=ci, sticky="ew", padx=2, pady=2)
                 e.bind("<KeyRelease>", lambda _: self._recalc())
+                self._all_entries.append(e)
                 cv[field] = v
-            lbl = tk.Label(rf, text="−0.00", font=("Consolas",9,"bold"),
-                           fg=RED, bg=SURFACE, width=8, anchor="center")
-            lbl.pack(side="left", padx=2)
+            lbl = tk.Label(f, text="\u22120.00", font=("Consolas",9,"bold"),
+                           fg=RED, bg=SURFACE, anchor="center")
+            lbl.grid(row=ri, column=4, sticky="ew", padx=2, pady=2)
             cv["lbl"] = lbl
             self._cw.append(cv)
 
@@ -624,56 +635,87 @@ class App(tk.Tk):
         self._corr_total_lbl.configure(text=f"Łącznie: {corr_grand:.2f} L")
         self._render_summary(data)
 
-    def _render_summary(self, data):
+    def _init_summary_rows(self, beers):
+        """Build summary rows ONCE. _recalc will only update labels."""
         f = self._sum_frame
         for w in f.winfo_children(): w.destroy()
+        self._sum_rows = []  # list of label dicts per beer
+
+        for beer in beers:
+            row = tk.Frame(f, bg=SURFACE, bd=1, relief="solid",
+                           highlightbackground=BORDER, highlightthickness=0)
+            row.pack(fill="x", pady=1)
+            tk.Label(row, text=beer["name"],
+                     font=("Segoe UI",10,"bold"), fg=TEXT,
+                     bg=SURFACE, width=10, anchor="w").pack(
+                side="left", padx=8, pady=4)
+            lbls = {}
+            for key, txt in [("start","START: 0L"),("del","Del: +0L"),
+                              ("end","END: 0L"),("pos","POS: 0L"),("kor","Kor: 0L")]:
+                l = tk.Label(row, text=txt, font=("Segoe UI",9),
+                             fg=MUTED, bg=SURFACE)
+                l.pack(side="left", padx=8)
+                lbls[key] = l
+            chip_f = tk.Frame(row, bg=GREEN_BG)
+            chip_f.pack(side="right", padx=10, pady=4)
+            chip_l = tk.Label(chip_f, text=" ✅ 0.00L ",
+                              font=("Segoe UI",10,"bold"),
+                              fg=GREEN, bg=GREEN_BG)
+            chip_l.pack(padx=4, pady=2)
+            lbls["chip_f"] = chip_f
+            lbls["chip_l"] = chip_l
+            self._sum_rows.append(lbls)
+
+        # Total row
+        tot_f = tk.Frame(f, bg=GOLD_BG, bd=1, relief="solid",
+                         highlightbackground=GOLD_LT, highlightthickness=0)
+        tot_f.pack(fill="x", pady=(4,0))
+        tk.Label(tot_f, text="ŁĄCZNIE", font=("Segoe UI",11,"bold"),
+                 fg=GOLD, bg=GOLD_BG).pack(side="left", padx=12, pady=6)
+        self._sum_pos_lbl = tk.Label(tot_f, text="POS: 0L",
+                                      font=("Segoe UI",10), fg=MUTED,
+                                      bg=GOLD_BG)
+        self._sum_pos_lbl.pack(side="left", padx=10)
+        self._tot_chip_f = tk.Frame(tot_f, bg=GREEN_BG)
+        self._tot_chip_f.pack(side="right", padx=12, pady=6)
+        self._tot_chip_l = tk.Label(self._tot_chip_f, text=" ✅ 0.00L ",
+                                     font=("Segoe UI",12,"bold"),
+                                     fg=GREEN, bg=GREEN_BG)
+        self._tot_chip_l.pack(padx=6, pady=3)
+
+    def _render_summary(self, data):
+        """Update summary labels in-place — NO widget rebuild, no flicker."""
+        if not hasattr(self, "_sum_rows") or len(self._sum_rows) != len(data["kegs"]):
+            self._init_summary_rows(db.get_beers())
         tot_diff = 0
         for i, keg in enumerate(data["kegs"]):
+            if i >= len(self._sum_rows): break
             pe   = data["pos"][i]  if i < len(data["pos"])  else {"sizes":[]}
             co   = data["corr"][i] if i < len(data["corr"]) else {}
             diff = db.calc_diff(keg, pe, co)
             s    = db.diff_status(diff)
             col, bg = DIFF_COLORS[s]
             tot_diff += diff
-            row = tk.Frame(f, bg=SURFACE, bd=1, relief="solid",
-                           highlightbackground=BORDER, highlightthickness=0)
-            row.pack(fill="x", pady=1)
-            tk.Label(row, text=keg["name"], font=("Segoe UI",10,"bold"),
-                     fg=TEXT, bg=SURFACE, width=10, anchor="w").pack(
-                side="left", padx=8, pady=4)
-            for lbl, val in [
-                ("START", f"{db.keg_start_liters(keg):.1f}L"),
-                ("Del",   f"+{db.keg_delivery_liters(keg):.0f}L"),
-                ("END",   f"{db.keg_end_liters(keg):.1f}L"),
-                ("POS",   f"{db.pos_liters(pe):.1f}L"),
-                ("Kor",   f"−{db.corr_liters(co):.1f}L"),
-            ]:
-                tk.Label(row, text=f"{lbl}: {val}",
-                         font=("Segoe UI",9), fg=MUTED,
-                         bg=SURFACE).pack(side="left", padx=8)
-            cf = tk.Frame(row, bg=bg)
-            cf.pack(side="right", padx=10, pady=4)
-            tk.Label(cf, text=f" {DIFF_ICONS[s]} {diff:+.2f}L ",
-                     font=("Segoe UI",10,"bold"), fg=col,
-                     bg=bg).pack(padx=4, pady=2)
-
-        # Total
+            lbls = self._sum_rows[i]
+            lbls["start"].configure(text=f"START: {db.keg_start_liters(keg):.1f}L")
+            lbls["del"].configure(text=f"Del: +{db.keg_delivery_liters(keg):.0f}L")
+            lbls["end"].configure(text=f"END: {db.keg_end_liters(keg):.1f}L")
+            lbls["pos"].configure(text=f"POS: {db.pos_liters(pe):.1f}L")
+            lbls["kor"].configure(text=f"Kor: −{db.corr_liters(co):.1f}L")
+            lbls["chip_f"].configure(bg=bg)
+            lbls["chip_l"].configure(
+                text=f" {DIFF_ICONS[s]} {diff:+.2f}L ",
+                fg=col, bg=bg)
+        # Update total
         ts = db.diff_status(tot_diff)
         tcol, tbg = DIFF_COLORS[ts]
-        tot = tk.Frame(f, bg=GOLD_BG, bd=1, relief="solid",
-                       highlightbackground=GOLD_LT, highlightthickness=0)
-        tot.pack(fill="x", pady=(4,0))
-        tk.Label(tot, text="ŁĄCZNIE", font=("Segoe UI",11,"bold"),
-                 fg=GOLD, bg=GOLD_BG).pack(side="left", padx=12, pady=6)
-        tk.Label(tot,
-                 text=f"POS: {sum(db.pos_liters(p) for p in data['pos']):.1f}L",
-                 font=("Segoe UI",10), fg=MUTED,
-                 bg=GOLD_BG).pack(side="left", padx=10)
-        cf = tk.Frame(tot, bg=tbg)
-        cf.pack(side="right", padx=12, pady=6)
-        tk.Label(cf, text=f" {DIFF_ICONS[ts]} {tot_diff:+.2f}L ",
-                 font=("Segoe UI",12,"bold"), fg=tcol,
-                 bg=tbg).pack(padx=6, pady=3)
+        self._sum_pos_lbl.configure(
+            text=f"POS: {sum(db.pos_liters(p) for p in data['pos']):.1f}L")
+        self._tot_chip_f.configure(bg=tbg)
+        self._tot_chip_l.configure(
+            text=f" {DIFF_ICONS[ts]} {tot_diff:+.2f}L ",
+            fg=tcol, bg=tbg)
+
 
     def _save_day(self):
         d = self.ev_date.get().strip()
