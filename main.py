@@ -1,31 +1,28 @@
 """
-main.py — Beer Count HRC Warsaw v4 (PyQt6)
-PyQt6 GUI + SQLite. No canvas glitches, native Windows rendering.
-database.py and export_excel.py unchanged.
+main.py — Beer Count HRC Warsaw v4
+- 3-column layout: Stan kegów | Sprzedaż POS | Korekty
+- Wynik dnia below
+- No stretch fields
+- Fixed history crash
+- Fixed settings add/remove
 """
-from __future__ import annotations
-import sys
-from datetime import date, timedelta, datetime
-
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton,
-    QLineEdit, QComboBox, QScrollArea, QStackedWidget, QMessageBox,
-    QFileDialog, QGridLayout, QVBoxLayout, QHBoxLayout,
-)
-
+import customtkinter as ctk
+import tkinter as tk
+from tkinter import messagebox, filedialog
 import database as db
 import export_excel as xl
+from datetime import date, timedelta, datetime
 
-# ── Colors ───────────────────────────────────────────────────────────
-GOLD    = "#9a6f1e"; GOLD_LT = "#c9a84c"; GOLD_BG = "#fdf3df"
-GREEN   = "#2a7a45"; GREEN_BG= "#eaf6ee"
-RED     = "#b83232"; RED_BG  = "#fdeaea"
-AMBER   = "#a06010"; AMBER_BG= "#fff4e0"
-ORANGE  = "#c05000"; ORANGE_BG="#fff0e0"
-BG      = "#f5f2ec"; SURFACE = "#ffffff"
-BORDER  = "#ddd8ce"; MUTED   = "#7a7265"; TEXT = "#1a1a1a"
+ctk.set_appearance_mode("light")
+ctk.set_default_color_theme("blue")
+
+GOLD    = "#9a6f1e"; GOLD_LT  = "#c9a84c"; GOLD_BG  = "#fdf3df"
+GREEN   = "#2a7a45"; GREEN_BG = "#eaf6ee"
+RED     = "#b83232"; RED_BG   = "#fdeaea"
+AMBER   = "#a06010"; AMBER_BG = "#fff4e0"
+ORANGE  = "#c05000"; ORANGE_BG= "#fff0e0"
+BG      = "#f5f2ec"; SURFACE  = "#ffffff"
+BORDER  = "#ddd8ce"; MUTED    = "#7a7265"; TEXT = "#1a1a1a"
 PREV_BG = "#f0ede6"
 
 DIFF_COLORS = {
@@ -34,7 +31,7 @@ DIFF_COLORS = {
     "over": (ORANGE, ORANGE_BG),
     "bad":  (RED,    RED_BG),
 }
-DIFF_ICONS = {"ok": "✅", "warn": "🟡", "over": "🟠", "bad": "🔴"}
+DIFF_ICONS = {"ok":"✅","warn":"🟡","over":"🟠","bad":"🔴"}
 DIFF_TEXTS = {
     "ok":   "Norma (±2L)",
     "warn": "+2/+5L — Sprawdź",
@@ -43,945 +40,937 @@ DIFF_TEXTS = {
 }
 
 
-# ── Widget factories ─────────────────────────────────────────────────
-def _lbl(text: str, size: int = 10, bold: bool = False,
-         color: str = TEXT) -> QLabel:
-    w = QLabel(text)
-    f = QFont("Segoe UI", size)
-    f.setBold(bold)
-    w.setFont(f)
-    w.setStyleSheet(f"color:{color};background:transparent;")
-    return w
+class ScrollFrame(tk.Frame):
+    """A plain tk Frame with vertical scrollbar — instant, no animation."""
+    def __init__(self, parent, bg=BG, **kw):
+        super().__init__(parent, bg=bg, **kw)
+        self._canvas = tk.Canvas(self, bg=bg, highlightthickness=0,
+                                  borderwidth=0)
+        self._sb = tk.Scrollbar(self, orient="vertical",
+                                 command=self._canvas.yview)
+        self._inner = tk.Frame(self._canvas, bg=bg)
+        self._win = self._canvas.create_window(
+            (0, 0), window=self._inner, anchor="nw")
+        self._canvas.configure(yscrollcommand=self._sb.set)
+        self._sb.pack(side="right", fill="y")
+        self._canvas.pack(side="left", fill="both", expand=True)
+        self._inner.bind("<Configure>", self._on_inner)
+        self._canvas.bind("<Configure>", self._on_canvas)
+        self.bind_all("<MouseWheel>", self._on_wheel)
+
+    def _on_inner(self, e):
+        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+
+    def _on_canvas(self, e):
+        self._canvas.itemconfig(self._win, width=e.width)
+
+    def _on_wheel(self, e):
+        self._canvas.yview_scroll(int(-1*(e.delta/120)), "units")
+
+    @property
+    def inner(self):
+        return self._inner
 
 
-def _btn(text: str, bg: str = GOLD, fg: str = "white",
-         w: int = 0, h: int = 36, bold: bool = True,
-         border: str = "") -> QPushButton:
-    b = QPushButton(text)
-    if w: b.setFixedWidth(w)
-    b.setFixedHeight(h)
-    b.setCursor(Qt.CursorShape.PointingHandCursor)
-    border_css = f"border:1px solid {border};" if border else "border:none;"
-    weight = "bold" if bold else "normal"
-    b.setStyleSheet(f"""
-        QPushButton{{background:{bg};color:{fg};{border_css}
-            border-radius:6px;padding:0 12px;
-            font-family:'Segoe UI';font-size:11px;font-weight:{weight};}}
-        QPushButton:hover{{background:{_dk(bg)};}}
-    """)
-    return b
+def make_label(parent, text, font=None, color=TEXT, bg=BG, anchor="w", **kw):
+    return tk.Label(parent, text=text,
+                    font=font or ("Segoe UI", 10),
+                    fg=color, bg=bg, anchor=anchor, **kw)
 
 
-def _entry(w: int = 100, h: int = 30, ph: str = "",
-           bg: str = SURFACE, mono: bool = True) -> QLineEdit:
-    e = QLineEdit()
-    e.setFixedWidth(w); e.setFixedHeight(h)
-    e.setFont(QFont("Consolas" if mono else "Segoe UI", 11))
-    if ph: e.setPlaceholderText(ph)
-    e.setStyleSheet(
-        f"background:{bg};color:{TEXT};border:1px solid {BORDER};"
-        f"border-radius:4px;padding:0 6px;"
-    )
+def make_entry(parent, var, width=8, bg=SURFACE, font=("Consolas", 10)):
+    e = tk.Entry(parent, textvariable=var, width=width,
+                 font=font, bg=bg, fg=TEXT,
+                 relief="solid", bd=1,
+                 highlightthickness=1,
+                 highlightcolor=GOLD,
+                 highlightbackground=BORDER)
     return e
 
 
-def _dk(hex_c: str, a: int = 12) -> str:
-    hex_c = hex_c.lstrip("#")
-    r, g, b = int(hex_c[:2],16), int(hex_c[2:4],16), int(hex_c[4:],16)
-    return f"#{max(0,r-a):02x}{max(0,g-a):02x}{max(0,b-a):02x}"
+def make_btn(parent, text, cmd, bg=GOLD, fg="white",
+             font=("Segoe UI", 10, "bold"), padx=12, pady=6):
+    return tk.Button(parent, text=text, command=cmd,
+                     bg=bg, fg=fg, font=font,
+                     relief="flat", cursor="hand2",
+                     padx=padx, pady=pady,
+                     activebackground=GOLD_LT,
+                     activeforeground="white",
+                     bd=0)
 
 
-def _sep(vertical: bool = False) -> QFrame:
-    f = QFrame()
-    f.setFrameShape(
-        QFrame.Shape.VLine if vertical else QFrame.Shape.HLine)
-    f.setFixedHeight(1) if not vertical else f.setFixedWidth(1)
-    f.setStyleSheet(f"background:{BORDER};border:none;")
+def chip_label(parent, text, col, bg):
+    f = tk.Frame(parent, bg=bg, bd=0)
+    tk.Label(f, text=text, fg=col, bg=bg,
+             font=("Segoe UI", 10, "bold"),
+             padx=8, pady=2).pack()
     return f
 
 
-def _chip_frame(text: str, fg: str, bg: str):
-    """Return (QFrame, QLabel) colour chip."""
-    frame = QFrame()
-    frame.setStyleSheet(f"background:{bg};border-radius:10px;")
-    lay = QHBoxLayout(frame)
-    lay.setContentsMargins(8, 3, 8, 3)
-    lbl = _lbl(text, 11, bold=True, color=fg)
-    lay.addWidget(lbl)
-    return frame, lbl
-
-
-def _make_card(parent_lay: QVBoxLayout, title: str):
-    """White card with gold title. Returns inner QVBoxLayout."""
-    wrapper = QWidget(); wrapper.setStyleSheet("background:transparent;")
-    wl = QVBoxLayout(wrapper); wl.setContentsMargins(18, 0, 18, 12); wl.setSpacing(0)
-
-    card = QFrame()
-    card.setStyleSheet(
-        f"QFrame{{background:{SURFACE};border:1px solid {BORDER};border-radius:8px;}}")
-    cl = QVBoxLayout(card); cl.setContentsMargins(0, 0, 0, 12); cl.setSpacing(0)
-
-    tl = _lbl(title, 13, bold=True, color=GOLD)
-    tl.setStyleSheet(
-        f"color:{GOLD};background:transparent;padding:12px 16px 4px 16px;")
-    cl.addWidget(tl)
-    cl.addWidget(_sep())
-
-    inner = QWidget(); inner.setStyleSheet("background:transparent;")
-    il = QVBoxLayout(inner)
-    il.setContentsMargins(16, 10, 16, 0); il.setSpacing(4)
-    cl.addWidget(inner); wl.addWidget(card); parent_lay.addWidget(wrapper)
-    return il
-
-
-# ═════════════════════════════════════════════════════════════════════
-class App(QMainWindow):
+class App(tk.Tk):
     def __init__(self):
         super().__init__()
         db.init_db()
-        self.setWindowTitle("🍺 Beer Count — Hard Rock Cafe Warsaw")
-        self.resize(1120, 760)
-        self.setMinimumSize(800, 580)
-
-        # State
-        self._tab_cache: set[str] = set()
-        self._kw: list[dict] = []
-        self._pw: list[dict] = []
-        self._cw: list[dict] = []
-        self._sum_row_labels: list[dict] = []
-        self._beer_rows: list[tuple] = []
-        self._size_rows: list[tuple] = []
-        self._kegs_grid_w = None
-        self._pos_grid_w = None
-        self._corr_grid_w = None
-
-        root_w = QWidget(); root_w.setStyleSheet(f"background:{BG};")
-        self.setCentralWidget(root_w)
-        root = QVBoxLayout(root_w)
-        root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)
-
-        self._build_header(root)
-        self._build_nav(root)
-        root.addWidget(_sep())
-
-        self._stack = QStackedWidget()
-        self._stack.setStyleSheet(f"background:{BG};")
-        root.addWidget(self._stack)
-
-        self._scrolls: dict[str, QScrollArea] = {}
-        self._tab_lay: dict[str, QVBoxLayout] = {}
-
-        for key in ("wizard", "entry", "history", "report", "settings"):
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setFrameShape(QFrame.Shape.NoFrame)
-            scroll.setStyleSheet(f"background:{BG};border:none;")
-            inner = QWidget(); inner.setStyleSheet(f"background:{BG};")
-            lay = QVBoxLayout(inner)
-            lay.setContentsMargins(0, 0, 0, 20); lay.setSpacing(0)
-            scroll.setWidget(inner)
-            self._stack.addWidget(scroll)
-            self._scrolls[key] = scroll
-            self._tab_lay[key] = lay
-
-        self._build_entry_tab()
-        self._build_history_tab()
-        self._build_report_tab()
-        self._build_settings_tab()
-
+        self.title("🍺 Beer Count — Hard Rock Cafe Warsaw")
+        self.geometry("1200x780")
+        self.minsize(900, 600)
+        self.configure(bg=BG)
+        self._build_header()
+        self._build_nav()
+        self._tabs = {}
+        self._tab_frames = {}
+        for key in ("wizard","entry","history","report","settings"):
+            sf = ScrollFrame(self, bg=BG)
+            self._tabs[key] = sf
+            self._tab_frames[key] = sf.inner
+        self._build_entry()
+        self._build_history()
+        self._build_report()
+        self._build_settings()
+        # First run
         if not db.get_months() and not db.load_day(str(date.today())):
             self._build_wizard()
-            self._show_raw("wizard")
+            self._show("wizard")
         else:
             self.show_tab("entry")
 
-    # ── Header ───────────────────────────────────────────────────────
-    def _build_header(self, root: QVBoxLayout):
-        h = QFrame(); h.setFixedHeight(52)
-        h.setStyleSheet(
-            f"background:{SURFACE};border-bottom:2px solid {GOLD_LT};")
-        hl = QHBoxLayout(h); hl.setContentsMargins(16, 0, 16, 0)
-        t1 = _lbl("🍺  Beer Count", 15, bold=True, color=GOLD)
-        hl.addWidget(t1)
-        hl.addWidget(_lbl("Hard Rock Cafe Warsaw", 10, color=MUTED))
-        hl.addStretch()
-        today = _lbl(date.today().strftime("%A, %d.%m.%Y"), 10, color=MUTED)
-        today.setStyleSheet(
-            f"color:{MUTED};background:{GOLD_BG};border-radius:10px;"
-            f"padding:4px 12px;")
-        hl.addWidget(today)
-        root.addWidget(h)
+    # ── Header ────────────────────────────────────
+    def _build_header(self):
+        h = tk.Frame(self, bg=SURFACE, height=50)
+        h.pack(fill="x"); h.pack_propagate(False)
+        tk.Frame(h, bg=GOLD_LT, height=2).pack(side="bottom", fill="x")
+        tk.Label(h, text="🍺  Beer Count", font=("Segoe UI",14,"bold"),
+                 fg=GOLD, bg=SURFACE).pack(side="left", padx=(16,4))
+        tk.Label(h, text="Hard Rock Cafe Warsaw",
+                 font=("Segoe UI",10), fg=MUTED, bg=SURFACE).pack(side="left")
+        tk.Label(h, text=date.today().strftime("%A, %d.%m.%Y"),
+                 font=("Segoe UI",10), fg=MUTED, bg=GOLD_BG,
+                 padx=10, pady=3, relief="flat").pack(side="right", padx=16, pady=12)
 
-    # ── Nav ──────────────────────────────────────────────────────────
-    def _build_nav(self, root: QVBoxLayout):
-        nav = QFrame(); nav.setFixedHeight(42)
-        nav.setStyleSheet(f"background:{SURFACE};")
-        nl = QHBoxLayout(nav); nl.setContentsMargins(0,0,0,0); nl.setSpacing(0)
-        self._nav_btns: dict[str, QPushButton] = {}
-        for key, label in [
-            ("entry",    "📋  Wpis dnia"),
-            ("history",  "📅  Historia"),
-            ("report",   "📊  Raport"),
-            ("settings", "⚙️  Ustawienia"),
-        ]:
-            b = QPushButton(label)
-            b.setFixedHeight(42); b.setFixedWidth(155)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setFont(QFont("Segoe UI", 11))
-            b.clicked.connect(lambda _checked, k=key: self.show_tab(k))
-            nl.addWidget(b); self._nav_btns[key] = b
-        nl.addStretch(); root.addWidget(nav)
-        self._set_nav("entry")
+    # ── Nav ───────────────────────────────────────
+    def _build_nav(self):
+        nav = tk.Frame(self, bg=SURFACE, height=40)
+        nav.pack(fill="x"); nav.pack_propagate(False)
+        tk.Frame(self, bg=BORDER, height=1).pack(fill="x")
+        self._nav_btns = {}
+        for key, lbl in [("entry","📋  Wpis dnia"),("history","📅  Historia"),
+                          ("report","📊  Raport"),("settings","⚙️  Ustawienia")]:
+            b = tk.Button(nav, text=lbl, font=("Segoe UI",10),
+                          fg=MUTED, bg=SURFACE, relief="flat",
+                          bd=0, padx=16, pady=10, cursor="hand2",
+                          activebackground=GOLD_BG, activeforeground=GOLD,
+                          command=lambda k=key: self.show_tab(k))
+            b.pack(side="left")
+            self._nav_btns[key] = b
 
-    def _set_nav(self, active: str):
+    def show_tab(self, key):
         for k, b in self._nav_btns.items():
-            if k == active:
-                b.setStyleSheet(f"""QPushButton{{
-                    background:{GOLD_BG};color:{GOLD};border:none;
-                    border-bottom:2px solid {GOLD};
-                    font-family:'Segoe UI';font-size:11px;font-weight:bold;}}""")
+            if k == key:
+                b.configure(bg=GOLD_BG, fg=GOLD,
+                            font=("Segoe UI",10,"bold"))
             else:
-                b.setStyleSheet(f"""QPushButton{{
-                    background:{SURFACE};color:{MUTED};border:none;
-                    font-family:'Segoe UI';font-size:11px;}}
-                    QPushButton:hover{{background:{GOLD_BG};}}""")
+                b.configure(bg=SURFACE, fg=MUTED,
+                            font=("Segoe UI",10))
+        self._show(key)
+        loader = getattr(self, f"_load_{key}", None)
+        if loader: loader()
 
-    # ── Tab switch ───────────────────────────────────────────────────
-    def show_tab(self, key: str):
-        self._set_nav(key)
-        self._show_raw(key)
-        if key not in self._tab_cache:
-            loader = getattr(self, f"_load_{key}", None)
-            if loader: loader()
-            self._tab_cache.add(key)
+    def _show(self, key):
+        for sf in self._tabs.values():
+            sf.pack_forget()
+        self._tabs[key].pack(fill="both", expand=True)
 
-    def _show_raw(self, key: str):
-        self._stack.setCurrentWidget(self._scrolls[key])
+    # ── Card helper ───────────────────────────────
+    def _card(self, parent, title, side=None, fill="both",
+              expand=False, padx=6, pady=6):
+        outer = tk.Frame(parent, bg=SURFACE, bd=1, relief="solid",
+                         highlightbackground=BORDER,
+                         highlightthickness=1)
+        if side:
+            outer.pack(side=side, fill=fill, expand=expand,
+                       padx=padx, pady=pady)
+        else:
+            outer.pack(fill=fill, expand=expand, padx=padx, pady=pady)
+        # title bar
+        th = tk.Frame(outer, bg=GOLD_BG)
+        th.pack(fill="x")
+        tk.Label(th, text=title, font=("Segoe UI",10,"bold"),
+                 fg=GOLD, bg=GOLD_BG, anchor="w",
+                 padx=10, pady=5).pack(fill="x")
+        tk.Frame(outer, bg=BORDER, height=1).pack(fill="x")
+        body = tk.Frame(outer, bg=SURFACE)
+        body.pack(fill="both", expand=True, padx=8, pady=8)
+        return body
 
-    # ── Convenience ──────────────────────────────────────────────────
-    def _card(self, key: str, title: str):
-        return _make_card(self._tab_lay[key], title)
+    def _sec(self, parent, title):
+        tk.Label(parent, text=title, font=("Segoe UI",10,"bold"),
+                 fg=GOLD, bg=BG, anchor="w").pack(
+            fill="x", padx=12, pady=(10,2))
+        tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=12)
 
-    # ══════════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════
     #  WIZARD
-    # ══════════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════
     def _build_wizard(self):
-        lay = self._tab_lay["wizard"]
-        while lay.count():
-            item = lay.takeAt(0)
-            if item.widget(): item.widget().setParent(None)
+        f = self._tab_frames["wizard"]
+        for w in f.winfo_children(): w.destroy()
 
-        # Welcome banner
-        bw = QWidget(); bw.setStyleSheet("background:transparent;")
-        bwl = QVBoxLayout(bw); bwl.setContentsMargins(18, 20, 18, 12)
-        card = QFrame()
-        card.setStyleSheet(
-            f"background:{SURFACE};border:1px solid {GOLD_LT};border-radius:12px;")
-        cv = QVBoxLayout(card); cv.setContentsMargins(20, 18, 20, 18)
-        t1 = _lbl("🍺  Witaj w Beer Count!", 18, bold=True, color=GOLD)
-        t1.setAlignment(Qt.AlignmentFlag.AlignCenter); cv.addWidget(t1)
-        t2 = _lbl(
-            "Aby zacząć, podaj aktualny stan beczek.\n"
-            "To jest potrzebne tylko raz — potem każdy dzień\n"
-            "będzie się uzupełniał automatycznie z poprzedniego.",
-            12, color=MUTED)
-        t2.setAlignment(Qt.AlignmentFlag.AlignCenter); cv.addWidget(t2)
-        bwl.addWidget(card); lay.addWidget(bw)
+        # Welcome
+        wf = tk.Frame(f, bg=GREEN_BG, bd=1, relief="solid",
+                      highlightbackground="#b3dfc0", highlightthickness=1)
+        wf.pack(fill="x", padx=20, pady=(20,10))
+        tk.Label(wf, text="🍺  Witaj w Beer Count!",
+                 font=("Segoe UI",16,"bold"), fg=GOLD, bg=GREEN_BG).pack(pady=(14,4))
+        tk.Label(wf,
+                 text="Aby zacząć, podaj aktualny stan beczek.\n"
+                      "To jest potrzebne tylko raz — potem każdy dzień\n"
+                      "będzie się uzupełniał automatycznie z poprzedniego.",
+                 font=("Segoe UI",11), fg=MUTED, bg=GREEN_BG,
+                 justify="center").pack(pady=(0,14))
 
-        # Date card
-        dc = self._card("wizard", "📅  Data stanu początkowego")
-        dr = QWidget(); dr.setStyleSheet("background:transparent;")
-        drl = QHBoxLayout(dr); drl.setContentsMargins(0,0,0,0); drl.setSpacing(8)
-        drl.addWidget(_lbl("Data:", 11, color=MUTED))
-        self._wiz_date = _entry(145, ph="2025-01-01")
-        self._wiz_date.setText(str(date.today()))
-        drl.addWidget(self._wiz_date)
-        drl.addWidget(_lbl(
-            "  Wpisz datę ostatniego liczenia beczek", 10, color=MUTED))
-        drl.addStretch(); dc.addWidget(dr)
+        # Date
+        dc = self._card(f, "📅  Data stanu początkowego",
+                        fill="x", padx=20, pady=(0,8))
+        df = tk.Frame(dc, bg=SURFACE)
+        df.pack(anchor="w")
+        tk.Label(df, text="Data:", font=("Segoe UI",10),
+                 fg=MUTED, bg=SURFACE).pack(side="left", padx=(0,6))
+        self._wiz_date = tk.StringVar(value=str(date.today()))
+        tk.Entry(df, textvariable=self._wiz_date, width=14,
+                 font=("Consolas",11), relief="solid", bd=1).pack(side="left")
+        tk.Label(df,
+                 text="  Wpisz datę ostatniego liczenia beczek",
+                 font=("Segoe UI",9), fg=MUTED, bg=SURFACE).pack(side="left")
 
-        # Beers card
-        bc = self._card("wizard", "🛢  Aktualny stan beczek")
-        bc.addWidget(_lbl(
-            "Podaj ile pełnych beczek masz teraz oraz wagę otwartych (kg brutto).\n"
-            "Tara odejmowana auto: 30L = 11kg | 20L = 7kg", 10, color=MUTED))
-        hdr = QFrame(); hdr.setStyleSheet(f"background:{GOLD_BG};border-radius:6px;")
-        hl = QHBoxLayout(hdr); hl.setContentsMargins(4, 6, 4, 6)
-        for col, cw in [("Piwo",120),("Pełne (szt.)",100),
-                         ("Otwarty kg #1",120),("Otwarty kg #2",120),
-                         ("Otwarty kg #3",120),("Razem (L)",100)]:
-            l = _lbl(col, 9, bold=True, color=GOLD)
-            l.setFixedWidth(cw); l.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            hl.addWidget(l)
-        hl.addStretch(); bc.addWidget(hdr)
+        # Beers table
+        bc = self._card(f, "🛢  Aktualny stan beczek",
+                        fill="x", padx=20, pady=(0,8))
+        tk.Label(bc, text="Tara: 30L=11kg | 20L=7kg",
+                 font=("Segoe UI",9), fg=MUTED, bg=SURFACE).pack(anchor="w", pady=(0,6))
+
+        hf = tk.Frame(bc, bg=GOLD_BG)
+        hf.pack(fill="x")
+        for col, w in [("Piwo",14),("Pełne (szt.)",10),
+                       ("Otw.kg#1",10),("Otw.kg#2",10),
+                       ("Otw.kg#3",10),("Razem (L)",10)]:
+            tk.Label(hf, text=col, font=("Segoe UI",9,"bold"),
+                     fg=GOLD, bg=GOLD_BG, width=w,
+                     anchor="center").pack(side="left", padx=4, pady=4)
 
         self._wiz_rows = []
         for beer in db.get_beers():
-            rw = QWidget(); rw.setStyleSheet("background:transparent;")
-            rl = QHBoxLayout(rw); rl.setContentsMargins(0,2,0,2); rl.setSpacing(4)
-            nl = _lbl(f"{beer['name']}\n({beer['keg']}L)", 11, bold=True)
-            nl.setFixedWidth(120); rl.addWidget(nl)
-            full_e = _entry(100, ph="0"); rl.addWidget(full_e)
-            open_es = []
+            rf = tk.Frame(bc, bg=SURFACE)
+            rf.pack(fill="x", pady=2)
+            tk.Label(rf, text=f"{beer['name']} ({beer['keg']}L)",
+                     font=("Segoe UI",10,"bold"), fg=TEXT,
+                     bg=SURFACE, width=14, anchor="w").pack(side="left", padx=4)
+            rv = {"beer": beer}
+            rv["full"] = tk.StringVar()
+            make_entry(rf, rv["full"], width=10).pack(side="left", padx=4)
+            rv["open"] = []
             for _ in range(3):
-                oe = _entry(120, ph="— kg"); rl.addWidget(oe); open_es.append(oe)
-            res_l = _lbl("0.00 L", 11, color=GOLD)
-            res_l.setFixedWidth(100)
-            res_l.setAlignment(Qt.AlignmentFlag.AlignCenter); rl.addWidget(res_l)
-            rl.addStretch(); bc.addWidget(rw)
-            rv = {"beer": beer, "full": full_e, "open": open_es, "res": res_l}
-            def make_upd(r=rv):
-                def upd(_=""):
-                    tara = db.TARA.get(r["beer"]["keg"], 7)
-                    try: full_l = int(r["full"].text() or "0") * r["beer"]["keg"]
-                    except: full_l = 0
-                    open_l = 0
-                    for v in r["open"]:
-                        try: open_l += max(float(v.text()) - tara, 0)
-                        except: pass
-                    r["res"].setText(f"{full_l+open_l:.2f} L")
-                return upd
-            u = make_upd(rv)
-            full_e.textChanged.connect(u)
-            for oe in open_es: oe.textChanged.connect(u)
+                ov = tk.StringVar()
+                make_entry(rf, ov, width=10).pack(side="left", padx=4)
+                rv["open"].append(ov)
+            res = tk.Label(rf, text="0.00 L", font=("Consolas",10),
+                           fg=GOLD, bg=SURFACE, width=10, anchor="center")
+            res.pack(side="left", padx=4)
+            rv["res"] = res
+
+            def upd(rv=rv):
+                tara = db.TARA.get(rv["beer"]["keg"], 7)
+                full_l = int(rv["full"].get() or 0) * rv["beer"]["keg"]
+                open_l = sum(
+                    max(float(v.get()) - tara, 0)
+                    for v in rv["open"]
+                    if self._is_float(v.get()))
+                rv["res"].configure(text=f"{full_l+open_l:.2f} L")
+
+            rv["full"].trace_add("write", lambda *_, u=upd: u())
+            for ov in rv["open"]:
+                ov.trace_add("write", lambda *_, u=upd: u())
             self._wiz_rows.append(rv)
 
-        # POS sizes reminder
-        sc = self._card("wizard", "🥃  Rozmiary porcji POS")
-        sc.addWidget(_lbl(
-            "Sprawdź czy poniższe rozmiary porcji są poprawne.\n"
-            "Możesz je zmienić w zakładce Ustawienia.", 10, color=MUTED))
-        sf = QWidget(); sf.setStyleSheet("background:transparent;")
-        sfl = QHBoxLayout(sf); sfl.setContentsMargins(0,0,0,0); sfl.setSpacing(8)
-        for sz in db.get_sizes():
-            ch = QFrame()
-            ch.setStyleSheet(f"background:{GOLD_BG};border-radius:8px;")
-            chl = QHBoxLayout(ch); chl.setContentsMargins(6,4,6,4)
-            chl.addWidget(_lbl(
-                f"  {sz['label']} = {sz['liters']}L  ", 11,
-                bold=True, color=GOLD))
-            sfl.addWidget(ch)
-        sfl.addStretch(); sc.addWidget(sf)
-
         # Buttons
-        brow = QWidget(); brow.setStyleSheet("background:transparent;")
-        brl = QHBoxLayout(brow); brl.setContentsMargins(18, 8, 18, 24); brl.setSpacing(12)
-        save_b = _btn("✅  Zapisz stan początkowy i zacznij!", h=46)
-        save_b.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
-        save_b.clicked.connect(self._save_wizard); brl.addWidget(save_b)
-        skip_b = _btn("Pomiń →", bg=SURFACE, fg=MUTED, w=100, h=46,
-                       bold=False, border=BORDER)
-        skip_b.clicked.connect(lambda: self.show_tab("entry"))
-        brl.addWidget(skip_b); brl.addStretch(); lay.addWidget(brow)
-        lay.addStretch()
+        bf = tk.Frame(f, bg=BG)
+        bf.pack(fill="x", padx=20, pady=12)
+        make_btn(bf, "✅  Zapisz stan początkowy i zacznij!",
+                 self._save_wizard).pack(side="left")
+        make_btn(bf, "Pomiń →",
+                 lambda: self.show_tab("entry"),
+                 bg=SURFACE, fg=MUTED, font=("Segoe UI",10)).pack(
+            side="left", padx=10)
 
     def _save_wizard(self):
-        d = self._wiz_date.text().strip()
-        if not d: QMessageBox.critical(self, "Błąd", "Wpisz datę!"); return
-        beers = db.get_beers(); sizes = db.get_sizes()
+        d = self._wiz_date.get().strip()
+        if not d: messagebox.showerror("Błąd","Wpisz datę!"); return
+        sizes = db.get_sizes()
+        beers = db.get_beers()
         data = {
             "kegs": [],
-            "pos":  [{"name": b["name"],
-                       "sizes": [{"liters": sz["liters"], "qty": "0"} for sz in sizes]}
+            "pos":  [{"name":b["name"],
+                      "sizes":[{"liters":sz["liters"],"qty":"0"}
+                                for sz in sizes]}
                      for b in beers],
-            "corr": [{"name": b["name"], "spill":"0","void_":"0","open_bar":"0"}
-                     for b in beers],
+            "corr": [{"name":b["name"],"spill":"0",
+                      "void_":"0","open_bar":"0"} for b in beers],
         }
         for rv in self._wiz_rows:
-            beer = rv["beer"]
             data["kegs"].append({
-                "name": beer["name"], "keg": beer["keg"], "start_l": 0.0,
+                "name":     rv["beer"]["name"],
+                "keg":      rv["beer"]["keg"],
+                "start_l":  0.0,
                 "delivery": "0",
-                "full_end": rv["full"].text() or "0",
-                "open_end": [v.text() or None for v in rv["open"]],
+                "full_end": rv["full"].get() or "0",
+                "open_end": [v.get() or None for v in rv["open"]],
             })
         db.save_day(d, data)
-        QMessageBox.information(
-            self, "Zapisano",
+        messagebox.showinfo("Zapisano",
             f"Stan początkowy na {d} zapisany ✓\n\n"
-            "Teraz możesz zacząć wpisywać codzienne dane!")
+            "Możesz teraz zacząć wpisywać codzienne dane!")
         self.show_tab("entry")
 
-    # ══════════════════════════════════════════════════════════════════
-    #  ENTRY TAB
-    # ══════════════════════════════════════════════════════════════════
-    def _build_entry_tab(self):
-        lay = self._tab_lay["entry"]
+    def _is_float(self, s):
+        try: float(s); return True
+        except: return False
 
-        # Info banner
-        bw = QWidget(); bw.setStyleSheet("background:transparent;")
-        bwl = QHBoxLayout(bw); bwl.setContentsMargins(18, 14, 18, 6)
-        banner = QFrame()
-        banner.setStyleSheet(
-            f"background:{GREEN_BG};border:1px solid #b3dfc0;border-radius:7px;")
-        bl = QHBoxLayout(banner); bl.setContentsMargins(14, 8, 14, 8)
-        bi = _lbl(
-            "✅  START ładuje się automatycznie z poprzedniego dnia — "
-            "wpisujesz tylko stan END na koniec zmiany + sprzedaż POS.",
-            10, color=GREEN)
-        bi.setWordWrap(True); bl.addWidget(bi); bwl.addWidget(banner)
-        lay.addWidget(bw)
+    # ══════════════════════════════════════════════
+    #  ENTRY TAB — 3-column layout
+    # ══════════════════════════════════════════════
+    def _build_entry(self):
+        f = self._tab_frames["entry"]
 
-        # Date card
-        dc = self._card("entry", "📅  Data wpisu")
-        dr = QWidget(); dr.setStyleSheet("background:transparent;")
-        drl = QHBoxLayout(dr); drl.setContentsMargins(0,0,0,0); drl.setSpacing(8)
-        drl.addWidget(_lbl("Data:", 11, color=MUTED))
-        self.ev_date = _entry(145)
-        self.ev_date.setText(str(date.today()))
-        self.ev_date.textChanged.connect(self._load_prev_starts)
-        drl.addWidget(self.ev_date)
-        for txt, delta in [("← Wczoraj", -1), ("Dzisiaj →", 0)]:
-            b = _btn(txt, bg=GOLD_BG, fg=GOLD, w=100, h=28, bold=False, border=BORDER)
-            b.clicked.connect(
-                lambda _c, d=delta:
-                self.ev_date.setText(str(date.today() + timedelta(days=d))))
-            drl.addWidget(b)
-        drl.addStretch(); dc.addWidget(dr)
+        # Banner
+        banner = tk.Frame(f, bg=GREEN_BG, bd=1, relief="solid",
+                          highlightbackground="#b3dfc0",
+                          highlightthickness=1)
+        banner.pack(fill="x", padx=12, pady=(10,6))
+        tk.Label(banner,
+                 text="✅  START ładuje się automatycznie z poprzedniego dnia"
+                      " — wpisujesz tylko END na koniec zmiany + POS.",
+                 font=("Segoe UI",9), fg=GREEN, bg=GREEN_BG,
+                 anchor="w", padx=10, pady=6).pack(fill="x")
 
-        # Kegs card
-        kc = self._card("entry", "🛢  Stan kegów — koniec zmiany")
-        kc.addWidget(_lbl(
-            "szare = START auto z poprzedniego dnia  |  "
-            "żółte = dostawa  |  Tara: 30L=11kg, 20L=7kg",
-            10, color=MUTED))
-        self._kegs_lay = kc
+        # Date row
+        df = tk.Frame(f, bg=BG)
+        df.pack(fill="x", padx=12, pady=(0,6))
+        tk.Label(df, text="Data:", font=("Segoe UI",10),
+                 fg=MUTED, bg=BG).pack(side="left", padx=(0,6))
+        self.ev_date = tk.StringVar(value=str(date.today()))
+        tk.Entry(df, textvariable=self.ev_date, width=14,
+                 font=("Consolas",11), relief="solid", bd=1).pack(side="left")
+        for lbl, d in [("← Wczoraj",-1),("Dzisiaj →",0)]:
+            make_btn(df, lbl,
+                     lambda d=d: self.ev_date.set(
+                         str(date.today()+timedelta(days=d))),
+                     bg=GOLD_BG, fg=GOLD,
+                     font=("Segoe UI",9), padx=8, pady=4).pack(
+                side="left", padx=5)
+        self.ev_date.trace_add("write", lambda *_: self._load_prev_starts())
 
-        # POS card
-        pc = self._card("entry", "💻  Sprzedaż POS — sztuki → litry")
-        self._pos_total_lbl = _lbl("Łącznie: 0.00 L", 10, color=MUTED)
-        self._pos_total_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-        pc.addWidget(self._pos_total_lbl)
-        self._pos_lay = pc
+        # ── 3-column row ──────────────────────────
+        cols = tk.Frame(f, bg=BG)
+        cols.pack(fill="both", expand=True, padx=6)
 
-        # Corr card
-        cc = self._card("entry", "⚠️  Korekty — Spill / Void / Open Bar (litry)")
-        self._corr_total_lbl = _lbl("Łącznie: 0.00 L", 10, color=MUTED)
-        self._corr_total_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-        cc.addWidget(self._corr_total_lbl)
-        self._corr_lay = cc
+        # Col 1: Stan kegów
+        self._kegs_card = self._card(cols, "🛢  Stan kegów",
+                                      side="left", fill="both",
+                                      expand=True, padx=4, pady=4)
+        tk.Label(self._kegs_card,
+                 text="szare=START auto | żółte=dostawa | Tara: 30L=11kg, 20L=7kg",
+                 font=("Segoe UI",8), fg=MUTED,
+                 bg=SURFACE).pack(anchor="w", pady=(0,4))
+        self._kegs_frame = tk.Frame(self._kegs_card, bg=SURFACE)
+        self._kegs_frame.pack(anchor="w")
 
-        # Summary card
-        self._sum_lay = self._card("entry", "📊  Wynik dnia")
+        # Col 2: POS
+        self._pos_card = self._card(cols, "💻  Sprzedaż POS",
+                                     side="left", fill="both",
+                                     expand=True, padx=4, pady=4)
+        self._pos_total_lbl = tk.Label(self._pos_card,
+                                        text="Łącznie: 0.00 L",
+                                        font=("Segoe UI",9), fg=MUTED,
+                                        bg=SURFACE, anchor="e")
+        self._pos_total_lbl.pack(fill="x", pady=(0,4))
+        self._pos_frame = tk.Frame(self._pos_card, bg=SURFACE)
+        self._pos_frame.pack(anchor="w")
 
-        # Legend card
-        lc = self._card("entry", "📖  Legenda")
-        leg = QWidget(); leg.setStyleSheet("background:transparent;")
-        legl = QHBoxLayout(leg); legl.setContentsMargins(0,0,0,0); legl.setSpacing(10)
+        # Col 3: Korekty
+        self._corr_card = self._card(cols, "⚠️  Korekty",
+                                      side="left", fill="both",
+                                      expand=True, padx=4, pady=4)
+        self._corr_total_lbl = tk.Label(self._corr_card,
+                                         text="Łącznie: 0.00 L",
+                                         font=("Segoe UI",9), fg=MUTED,
+                                         bg=SURFACE, anchor="e")
+        self._corr_total_lbl.pack(fill="x", pady=(0,4))
+        self._corr_frame = tk.Frame(self._corr_card, bg=SURFACE)
+        self._corr_frame.pack(anchor="w")
+
+        # Wynik dnia — full width below
+        self._sum_card = self._card(f, "📊  Wynik dnia",
+                                     fill="x", padx=10, pady=(0,6))
+        self._sum_frame = tk.Frame(self._sum_card, bg=SURFACE)
+        self._sum_frame.pack(fill="x")
+
+        # Legend
+        leg = tk.Frame(f, bg=BG)
+        leg.pack(fill="x", padx=12, pady=(0,6))
         for status, (col, bg) in DIFF_COLORS.items():
-            ch = QFrame()
-            ch.setStyleSheet(f"background:{bg};border-radius:8px;")
-            chl = QHBoxLayout(ch); chl.setContentsMargins(6,3,6,3)
-            chl.addWidget(
-                _lbl(f"  {DIFF_ICONS[status]} {DIFF_TEXTS[status]}  ", 10, color=col))
-            legl.addWidget(ch)
-        legl.addStretch(); lc.addWidget(leg)
+            lf = tk.Frame(leg, bg=bg, bd=1, relief="solid",
+                          highlightbackground=col, highlightthickness=0)
+            lf.pack(side="left", padx=(0,8))
+            tk.Label(lf, text=f" {DIFF_ICONS[status]} {DIFF_TEXTS[status]} ",
+                     font=("Segoe UI",9), fg=col, bg=bg).pack(padx=4, pady=2)
 
         # Buttons
-        brow = QWidget(); brow.setStyleSheet("background:transparent;")
-        brl = QHBoxLayout(brow); brl.setContentsMargins(18,4,18,18); brl.setSpacing(10)
-        sb = _btn("💾  Zapisz dzień", w=180, h=40)
-        sb.clicked.connect(self._save_day); brl.addWidget(sb)
-        rb = _btn("🔄  Przelicz", bg=GOLD_BG, fg=GOLD, w=120, h=40,
-                   bold=False, border=BORDER)
-        rb.clicked.connect(self._recalc); brl.addWidget(rb)
-        cb = _btn("🗑  Wyczyść", bg=SURFACE, fg=MUTED, w=120, h=40,
-                   bold=False, border=BORDER)
-        cb.clicked.connect(self._clear_entry); brl.addWidget(cb)
-        brl.addStretch(); lay.addWidget(brow); lay.addStretch()
+        bf = tk.Frame(f, bg=BG)
+        bf.pack(fill="x", padx=12, pady=(0,14))
+        make_btn(bf, "💾  Zapisz dzień",
+                 self._save_day).pack(side="left", padx=(0,8))
+        make_btn(bf, "🔄  Przelicz", self._recalc,
+                 bg=GOLD_BG, fg=GOLD,
+                 font=("Segoe UI",10)).pack(side="left", padx=(0,8))
+        make_btn(bf, "🗑  Wyczyść", self._clear,
+                 bg=SURFACE, fg=MUTED,
+                 font=("Segoe UI",10)).pack(side="left")
+
+        self._kw = []; self._pw = []; self._cw = []
 
     def _load_entry(self):
-        beers = db.get_beers(); sizes = db.get_sizes()
+        beers = db.get_beers()
+        sizes = db.get_sizes()
         self._build_keg_inputs(beers)
         self._build_pos_inputs(beers, sizes)
         self._build_corr_inputs(beers)
-        self._build_summary_rows(beers)
         self._load_prev_starts()
         self._recalc()
 
     def _build_keg_inputs(self, beers):
-        if self._kegs_grid_w:
-            self._kegs_lay.removeWidget(self._kegs_grid_w)
-            self._kegs_grid_w.deleteLater()
-        gw = QWidget(); gw.setStyleSheet("background:transparent;")
-        g = QGridLayout(gw); g.setContentsMargins(0,0,0,0); g.setSpacing(3)
-        self._kegs_grid_w = gw; self._kegs_lay.addWidget(gw)
-
-        hdrs = ["Piwo","START\n(auto)","DOSTAWA\n(kegi)","PEŁNE",
-                 "Otw.kg#1","Otw.kg#2","Otw.kg#3","END (L)"]
-        widths = [115, 90, 75, 75, 82, 82, 82, 85]
-        for ci, (h, cw) in enumerate(zip(hdrs, widths)):
-            l = _lbl(h, 9, bold=True, color=GOLD)
-            l.setFixedWidth(cw); l.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            g.addWidget(l, 0, ci)
-
+        f = self._kegs_frame
+        for w in f.winfo_children(): w.destroy()
         self._kw = []
-        for ri, beer in enumerate(beers):
+        hdrs = ["Piwo","START","DOSTAWA","PEŁNE",
+                "kg#1","kg#2","kg#3","END(L)"]
+        ws   = [12,    9,      7,        6,
+                7,     7,      7,        7]
+        hf = tk.Frame(f, bg=GOLD_BG)
+        hf.pack(fill="x", pady=(0,2))
+        for h, w in zip(hdrs, ws):
+            tk.Label(hf, text=h, font=("Segoe UI",8,"bold"),
+                     fg=GOLD, bg=GOLD_BG, width=w,
+                     anchor="center").pack(side="left", padx=2, pady=3)
+        for beer in beers:
             rv = {"beer": beer, "_start_l": 0.0}
-            nl = _lbl(f"{beer['name']}\n({beer['keg']}L)", 11, bold=True)
-            nl.setFixedWidth(115); g.addWidget(nl, ri+1, 0)
-
-            sl = _lbl("—", 11, color=GOLD)
-            sl.setFixedWidth(90); sl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            sl.setStyleSheet(
-                f"color:{GOLD};background:{PREV_BG};border-radius:5px;")
-            g.addWidget(sl, ri+1, 1); rv["start_lbl"] = sl
-
-            de = _entry(75, bg=GOLD_BG, ph="0")
-            de.textChanged.connect(self._recalc)
-            g.addWidget(de, ri+1, 2); rv["delivery"] = de
-
-            fe = _entry(75, ph="0")
-            fe.textChanged.connect(self._recalc)
-            g.addWidget(fe, ri+1, 3); rv["full_end"] = fe
-
+            rf = tk.Frame(f, bg=SURFACE)
+            rf.pack(fill="x", pady=1)
+            tk.Label(rf, text=f"{beer['name']}\n({beer['keg']}L)",
+                     font=("Segoe UI",9,"bold"), fg=TEXT, bg=SURFACE,
+                     width=12, anchor="w").pack(side="left", padx=2)
+            rv["start_lbl"] = tk.Label(rf, text="—",
+                                        font=("Consolas",9), fg=GOLD,
+                                        bg=PREV_BG, width=9, anchor="center",
+                                        relief="flat")
+            rv["start_lbl"].pack(side="left", padx=2)
+            rv["delivery"] = tk.StringVar()
+            e = make_entry(rf, rv["delivery"], width=7, bg=GOLD_BG)
+            e.pack(side="left", padx=2)
+            e.bind("<KeyRelease>", lambda _: self._recalc())
+            rv["full_end"] = tk.StringVar()
+            e2 = make_entry(rf, rv["full_end"], width=6)
+            e2.pack(side="left", padx=2)
+            e2.bind("<KeyRelease>", lambda _: self._recalc())
             rv["open_end"] = []
-            for j in range(3):
-                oe = _entry(82, ph="—")
-                oe.textChanged.connect(self._recalc)
-                g.addWidget(oe, ri+1, 4+j); rv["open_end"].append(oe)
-
-            el = _lbl("—", 11, color=GOLD)
-            el.setFixedWidth(85); el.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            g.addWidget(el, ri+1, 7); rv["end_lbl"] = el
+            for _ in range(3):
+                ov = tk.StringVar()
+                oe = make_entry(rf, ov, width=7)
+                oe.pack(side="left", padx=2)
+                oe.bind("<KeyRelease>", lambda _: self._recalc())
+                rv["open_end"].append(ov)
+            rv["end_lbl"] = tk.Label(rf, text="—",
+                                      font=("Consolas",9,"bold"),
+                                      fg=GOLD, bg=SURFACE,
+                                      width=7, anchor="center")
+            rv["end_lbl"].pack(side="left", padx=2)
             self._kw.append(rv)
 
     def _build_pos_inputs(self, beers, sizes):
-        if self._pos_grid_w:
-            self._pos_lay.removeWidget(self._pos_grid_w)
-            self._pos_grid_w.deleteLater()
-        gw = QWidget(); gw.setStyleSheet("background:transparent;")
-        g = QGridLayout(gw); g.setContentsMargins(0,0,0,0); g.setSpacing(3)
-        self._pos_grid_w = gw; self._pos_lay.addWidget(gw)
-
-        h0 = _lbl("Piwo", 9, bold=True, color=GOLD)
-        h0.setFixedWidth(110); g.addWidget(h0, 0, 0)
-        for si, sz in enumerate(sizes):
-            hl = _lbl(sz["label"], 9, bold=True, color=GOLD)
-            hl.setFixedWidth(80); hl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            g.addWidget(hl, 0, si+1)
-        hr = _lbl("Razem (L)", 9, bold=True, color=GOLD)
-        hr.setFixedWidth(90); hr.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        g.addWidget(hr, 0, len(sizes)+1)
-
+        f = self._pos_frame
+        for w in f.winfo_children(): w.destroy()
         self._pw = []
-        for ri, beer in enumerate(beers):
-            nl = _lbl(beer["name"], 11, bold=True)
-            nl.setFixedWidth(110); g.addWidget(nl, ri+1, 0)
+        hf = tk.Frame(f, bg=GOLD_BG)
+        hf.pack(fill="x", pady=(0,2))
+        tk.Label(hf, text="Piwo", font=("Segoe UI",8,"bold"),
+                 fg=GOLD, bg=GOLD_BG, width=10,
+                 anchor="w").pack(side="left", padx=2, pady=3)
+        for sz in sizes:
+            tk.Label(hf, text=sz["label"], font=("Segoe UI",8,"bold"),
+                     fg=GOLD, bg=GOLD_BG, width=7,
+                     anchor="center").pack(side="left", padx=2, pady=3)
+        tk.Label(hf, text="Razem", font=("Segoe UI",8,"bold"),
+                 fg=GOLD, bg=GOLD_BG, width=8,
+                 anchor="center").pack(side="left", padx=2, pady=3)
+        for beer in beers:
+            rf = tk.Frame(f, bg=SURFACE)
+            rf.pack(fill="x", pady=1)
+            tk.Label(rf, text=beer["name"], font=("Segoe UI",9,"bold"),
+                     fg=TEXT, bg=SURFACE, width=10,
+                     anchor="w").pack(side="left", padx=2)
             svars = []
-            for si, sz in enumerate(sizes):
-                e = _entry(80, h=28, ph="0")
-                e.textChanged.connect(self._recalc)
-                g.addWidget(e, ri+1, si+1)
-                svars.append({"entry": e, "liters": sz["liters"]})
-            tl = _lbl("0.00 L", 11, color=GOLD)
-            tl.setFixedWidth(90); tl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            g.addWidget(tl, ri+1, len(sizes)+1)
-            self._pw.append({"name": beer["name"], "sizes": svars, "lbl": tl})
+            for sz in sizes:
+                sv = tk.StringVar()
+                e = make_entry(rf, sv, width=7)
+                e.pack(side="left", padx=2)
+                e.bind("<KeyRelease>", lambda _: self._recalc())
+                svars.append({"var": sv, "liters": sz["liters"]})
+            lbl = tk.Label(rf, text="0.00L", font=("Consolas",9,"bold"),
+                           fg=GOLD, bg=SURFACE, width=8, anchor="center")
+            lbl.pack(side="left", padx=2)
+            self._pw.append({"name": beer["name"], "sizes": svars, "lbl": lbl})
 
     def _build_corr_inputs(self, beers):
-        if self._corr_grid_w:
-            self._corr_lay.removeWidget(self._corr_grid_w)
-            self._corr_grid_w.deleteLater()
-        gw = QWidget(); gw.setStyleSheet("background:transparent;")
-        g = QGridLayout(gw); g.setContentsMargins(0,0,0,0); g.setSpacing(3)
-        self._corr_grid_w = gw; self._corr_lay.addWidget(gw)
-
-        for ci, h in enumerate(["Piwo","Spill (L)","Void (L)","Open Bar (L)","Razem (L)"]):
-            hl = _lbl(h, 9, bold=True, color=GOLD)
-            hl.setFixedWidth(110); hl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            g.addWidget(hl, 0, ci)
-
+        f = self._corr_frame
+        for w in f.winfo_children(): w.destroy()
         self._cw = []
-        for ri, beer in enumerate(beers):
-            nl = _lbl(beer["name"], 11, bold=True)
-            nl.setFixedWidth(110); g.addWidget(nl, ri+1, 0)
+        hf = tk.Frame(f, bg=GOLD_BG)
+        hf.pack(fill="x", pady=(0,2))
+        for h, w in [("Piwo",10),("Spill",7),("Void",7),("Open Bar",8),("Razem",8)]:
+            tk.Label(hf, text=h, font=("Segoe UI",8,"bold"),
+                     fg=GOLD, bg=GOLD_BG, width=w,
+                     anchor="center").pack(side="left", padx=2, pady=3)
+        for beer in beers:
+            rf = tk.Frame(f, bg=SURFACE)
+            rf.pack(fill="x", pady=1)
+            tk.Label(rf, text=beer["name"], font=("Segoe UI",9,"bold"),
+                     fg=TEXT, bg=SURFACE, width=10,
+                     anchor="w").pack(side="left", padx=2)
             cv = {"name": beer["name"]}
-            for ci, field in enumerate(["spill","void_","open_bar"], 1):
-                e = _entry(110, h=28, ph="0")
-                e.textChanged.connect(self._recalc)
-                g.addWidget(e, ri+1, ci); cv[field] = e
-            tl = _lbl("−0.00 L", 11, color=RED)
-            tl.setFixedWidth(110); tl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            g.addWidget(tl, ri+1, 4); cv["lbl"] = tl
+            for field, w in [("spill",7),("void_",7),("open_bar",8)]:
+                v = tk.StringVar()
+                e = make_entry(rf, v, width=w)
+                e.pack(side="left", padx=2)
+                e.bind("<KeyRelease>", lambda _: self._recalc())
+                cv[field] = v
+            lbl = tk.Label(rf, text="−0.00", font=("Consolas",9,"bold"),
+                           fg=RED, bg=SURFACE, width=8, anchor="center")
+            lbl.pack(side="left", padx=2)
+            cv["lbl"] = lbl
             self._cw.append(cv)
 
-    def _build_summary_rows(self, beers):
-        lay = self._sum_lay
-        for i in reversed(range(lay.count())):
-            item = lay.itemAt(i)
-            if item.widget(): item.widget().setParent(None)
-        self._sum_row_labels = []
-
-        for beer in beers:
-            row = QFrame()
-            row.setStyleSheet(
-                f"QFrame{{background:{SURFACE};border:1px solid {BORDER};"
-                f"border-radius:6px;}}")
-            rl = QHBoxLayout(row); rl.setContentsMargins(12,6,12,6)
-            rl.addWidget(_lbl(beer["name"], 11, bold=True))
-            detail = {}
-            for key in ("START","Del","END","POS","Kor"):
-                l = _lbl(f"{key}: —", 10, color=MUTED); rl.addWidget(l)
-                detail[key] = l
-            rl.addStretch()
-            chip, chip_lbl = _chip_frame("—", GREEN, GREEN_BG)
-            rl.addWidget(chip); lay.addWidget(row)
-            self._sum_row_labels.append(
-                {"detail": detail, "chip": chip, "chip_lbl": chip_lbl})
-
-        # Total row
-        tot = QFrame()
-        tot.setStyleSheet(
-            f"QFrame{{background:{GOLD_BG};border:1px solid {GOLD_LT};"
-            f"border-radius:6px;}}")
-        tl = QHBoxLayout(tot); tl.setContentsMargins(14,8,14,8)
-        tl.addWidget(_lbl("ŁĄCZNIE", 12, bold=True, color=GOLD))
-        self._sum_pos_lbl = _lbl("POS: —", 11, color=MUTED)
-        tl.addWidget(self._sum_pos_lbl); tl.addStretch()
-        self._sum_tot_chip, self._sum_tot_lbl = _chip_frame("—", GREEN, GREEN_BG)
-        tl.addWidget(self._sum_tot_chip); lay.addWidget(tot)
-
-    def _load_prev_starts(self, _=""):
-        d = self.ev_date.text().strip()
-        if len(d) != 10: return
-        try: datetime.strptime(d, "%Y-%m-%d")
-        except ValueError: return
+    def _load_prev_starts(self, *_):
+        d = self.ev_date.get().strip()
+        if not d: return
         prev = db.get_prev_day(d)
         if not prev: return
-        pk = {k["name"]: db.keg_end_liters(k) for k in prev.get("kegs", [])}
+        prev_kegs = {k["name"]: db.keg_end_liters(k)
+                     for k in prev.get("kegs", [])}
         for rw in self._kw:
-            val = pk.get(rw["beer"]["name"], 0.0)
+            name = rw["beer"]["name"]
+            val  = prev_kegs.get(name, 0.0)
             rw["_start_l"] = val
-            rw["start_lbl"].setText(f"{val:.2f} L")
+            rw["start_lbl"].configure(text=f"{val:.1f}L")
 
     def _collect(self):
         data = {"kegs": [], "pos": [], "corr": []}
         for rw in self._kw:
-            b = rw["beer"]
+            beer = rw["beer"]
             data["kegs"].append({
-                "name": b["name"], "keg": b["keg"],
-                "start_l": rw.get("_start_l", 0.0),
-                "delivery": rw["delivery"].text() or "0",
-                "full_end": rw["full_end"].text() or "0",
-                "open_end": [v.text() or None for v in rw["open_end"]],
+                "name":     beer["name"],
+                "keg":      beer["keg"],
+                "start_l":  rw.get("_start_l", 0.0),
+                "delivery": rw["delivery"].get() or "0",
+                "full_end": rw["full_end"].get() or "0",
+                "open_end": [v.get() or None for v in rw["open_end"]],
             })
         for pw in self._pw:
-            data["pos"].append({"name": pw["name"], "sizes": [
-                {"liters": sv["liters"], "qty": sv["entry"].text() or "0"}
-                for sv in pw["sizes"]]})
+            data["pos"].append({
+                "name":  pw["name"],
+                "sizes": [{"liters": sv["liters"],
+                           "qty": sv["var"].get() or "0"}
+                          for sv in pw["sizes"]],
+            })
         for cw in self._cw:
             data["corr"].append({
-                "name": cw["name"],
-                "spill": cw["spill"].text() or "0",
-                "void_": cw["void_"].text() or "0",
-                "open_bar": cw["open_bar"].text() or "0",
+                "name":     cw["name"],
+                "spill":    cw["spill"].get() or "0",
+                "void_":    cw["void_"].get() or "0",
+                "open_bar": cw["open_bar"].get() or "0",
             })
         return data
 
-    def _recalc(self, _=""):
+    def _recalc(self, *_):
         try: data = self._collect()
-        except Exception: return
+        except: return
         for i, rw in enumerate(self._kw):
-            rw["end_lbl"].setText(f"{db.keg_end_liters(data['kegs'][i]):.2f} L")
-        pos_g = 0
+            end_l = db.keg_end_liters(data["kegs"][i])
+            rw["end_lbl"].configure(text=f"{end_l:.1f}L")
+        pos_grand = 0
         for i, pw in enumerate(self._pw):
-            t = db.pos_liters(data["pos"][i]); pos_g += t
-            pw["lbl"].setText(f"{t:.2f} L")
-        self._pos_total_lbl.setText(f"Łącznie: {pos_g:.2f} L")
-        corr_g = 0
+            t = db.pos_liters(data["pos"][i]); pos_grand += t
+            pw["lbl"].configure(text=f"{t:.2f}L")
+        self._pos_total_lbl.configure(text=f"Łącznie: {pos_grand:.2f} L")
+        corr_grand = 0
         for i, cw in enumerate(self._cw):
-            t = db.corr_liters(data["corr"][i]); corr_g += t
-            cw["lbl"].setText(f"−{t:.2f} L")
-        self._corr_total_lbl.setText(f"Łącznie: {corr_g:.2f} L")
+            t = db.corr_liters(data["corr"][i]); corr_grand += t
+            cw["lbl"].configure(text=f"−{t:.2f}")
+        self._corr_total_lbl.configure(text=f"Łącznie: {corr_grand:.2f} L")
         self._render_summary(data)
 
     def _render_summary(self, data):
-        if (not self._sum_row_labels or
-                len(self._sum_row_labels) != len(data["kegs"])):
-            self._build_summary_rows([{"name": k["name"]} for k in data["kegs"]])
-        tot = 0
+        f = self._sum_frame
+        for w in f.winfo_children(): w.destroy()
+        tot_diff = 0
         for i, keg in enumerate(data["kegs"]):
-            pe = data["pos"][i]  if i < len(data["pos"])  else {"sizes": []}
-            co = data["corr"][i] if i < len(data["corr"]) else {}
-            diff = db.calc_diff(keg, pe, co); s = db.diff_status(diff)
-            col, bg = DIFF_COLORS[s]; tot += diff
-            refs = self._sum_row_labels[i]
-            refs["detail"]["START"].setText(f"START: {db.keg_start_liters(keg):.1f}L")
-            refs["detail"]["Del"].setText(f"Del: +{db.keg_delivery_liters(keg):.0f}L")
-            refs["detail"]["END"].setText(f"END: {db.keg_end_liters(keg):.1f}L")
-            refs["detail"]["POS"].setText(f"POS: {db.pos_liters(pe):.1f}L")
-            refs["detail"]["Kor"].setText(f"Kor: −{db.corr_liters(co):.1f}L")
-            refs["chip"].setStyleSheet(f"background:{bg};border-radius:10px;")
-            refs["chip_lbl"].setText(f"  {DIFF_ICONS[s]} {diff:+.2f}L  ")
-            refs["chip_lbl"].setStyleSheet(f"color:{col};background:transparent;")
-        ts = db.diff_status(tot); tcol, tbg = DIFF_COLORS[ts]
-        pt = sum(db.pos_liters(p) for p in data["pos"])
-        self._sum_pos_lbl.setText(f"POS: {pt:.1f}L")
-        self._sum_tot_chip.setStyleSheet(f"background:{tbg};border-radius:10px;")
-        self._sum_tot_lbl.setText(f"  {DIFF_ICONS[ts]} {tot:+.2f}L  ")
-        self._sum_tot_lbl.setStyleSheet(f"color:{tcol};background:transparent;")
+            pe   = data["pos"][i]  if i < len(data["pos"])  else {"sizes":[]}
+            co   = data["corr"][i] if i < len(data["corr"]) else {}
+            diff = db.calc_diff(keg, pe, co)
+            s    = db.diff_status(diff)
+            col, bg = DIFF_COLORS[s]
+            tot_diff += diff
+            row = tk.Frame(f, bg=SURFACE, bd=1, relief="solid",
+                           highlightbackground=BORDER, highlightthickness=0)
+            row.pack(fill="x", pady=1)
+            tk.Label(row, text=keg["name"], font=("Segoe UI",10,"bold"),
+                     fg=TEXT, bg=SURFACE, width=10, anchor="w").pack(
+                side="left", padx=8, pady=4)
+            for lbl, val in [
+                ("START", f"{db.keg_start_liters(keg):.1f}L"),
+                ("Del",   f"+{db.keg_delivery_liters(keg):.0f}L"),
+                ("END",   f"{db.keg_end_liters(keg):.1f}L"),
+                ("POS",   f"{db.pos_liters(pe):.1f}L"),
+                ("Kor",   f"−{db.corr_liters(co):.1f}L"),
+            ]:
+                tk.Label(row, text=f"{lbl}: {val}",
+                         font=("Segoe UI",9), fg=MUTED,
+                         bg=SURFACE).pack(side="left", padx=8)
+            cf = tk.Frame(row, bg=bg)
+            cf.pack(side="right", padx=10, pady=4)
+            tk.Label(cf, text=f" {DIFF_ICONS[s]} {diff:+.2f}L ",
+                     font=("Segoe UI",10,"bold"), fg=col,
+                     bg=bg).pack(padx=4, pady=2)
+
+        # Total
+        ts = db.diff_status(tot_diff)
+        tcol, tbg = DIFF_COLORS[ts]
+        tot = tk.Frame(f, bg=GOLD_BG, bd=1, relief="solid",
+                       highlightbackground=GOLD_LT, highlightthickness=0)
+        tot.pack(fill="x", pady=(4,0))
+        tk.Label(tot, text="ŁĄCZNIE", font=("Segoe UI",11,"bold"),
+                 fg=GOLD, bg=GOLD_BG).pack(side="left", padx=12, pady=6)
+        tk.Label(tot,
+                 text=f"POS: {sum(db.pos_liters(p) for p in data['pos']):.1f}L",
+                 font=("Segoe UI",10), fg=MUTED,
+                 bg=GOLD_BG).pack(side="left", padx=10)
+        cf = tk.Frame(tot, bg=tbg)
+        cf.pack(side="right", padx=12, pady=6)
+        tk.Label(cf, text=f" {DIFF_ICONS[ts]} {tot_diff:+.2f}L ",
+                 font=("Segoe UI",12,"bold"), fg=tcol,
+                 bg=tbg).pack(padx=6, pady=3)
 
     def _save_day(self):
-        d = self.ev_date.text().strip()
-        if not d: QMessageBox.critical(self, "Błąd", "Wpisz datę!"); return
-        data = self._collect(); db.save_day(d, data)
-        self._tab_cache.discard("history"); self._tab_cache.discard("report")
-        QMessageBox.information(self, "Zapisano", f"Dzień {d} zapisany ✓")
+        d = self.ev_date.get().strip()
+        if not d: messagebox.showerror("Błąd","Wpisz datę!"); return
+        data = self._collect()
+        db.save_day(d, data)
+        messagebox.showinfo("Zapisano", f"Dzień {d} zapisany ✓")
 
-    def _clear_entry(self):
-        if (QMessageBox.question(self, "Wyczyścić?", "Wyczyścić wszystkie pola?") !=
-                QMessageBox.StandardButton.Yes):
+    def _clear(self):
+        if not messagebox.askyesno("Wyczyścić?","Wyczyścić wszystkie pola?"):
             return
         for rw in self._kw:
-            rw["delivery"].clear(); rw["full_end"].clear()
-            for v in rw["open_end"]: v.clear()
+            rw["delivery"].set(""); rw["full_end"].set("")
+            for v in rw["open_end"]: v.set("")
         for pw in self._pw:
-            for sv in pw["sizes"]: sv["entry"].clear()
+            for sv in pw["sizes"]: sv["var"].set("")
         for cw in self._cw:
-            for f in ["spill","void_","open_bar"]: cw[f].clear()
+            for fld in ["spill","void_","open_bar"]: cw[fld].set("")
         self._recalc()
 
-    # ══════════════════════════════════════════════════════════════════
-    #  HISTORY TAB
-    # ══════════════════════════════════════════════════════════════════
-    def _build_history_tab(self):
-        lay = self._tab_lay["history"]
-        top = QWidget(); top.setStyleSheet("background:transparent;")
-        tl = QHBoxLayout(top); tl.setContentsMargins(18,14,18,8); tl.setSpacing(8)
-        tl.addWidget(_lbl("Miesiąc:", 11, color=MUTED))
-        self._hist_cb = QComboBox()
-        self._hist_cb.setFixedWidth(240); self._hist_cb.setFixedHeight(34)
-        self._hist_cb.addItem("(brak)")
-        self._hist_cb.currentIndexChanged.connect(self._render_history)
-        tl.addWidget(self._hist_cb); tl.addStretch(); lay.addWidget(top)
-
-        self._hist_list_w = QWidget(); self._hist_list_w.setStyleSheet("background:transparent;")
-        self._hist_list_lay = QVBoxLayout(self._hist_list_w)
-        self._hist_list_lay.setContentsMargins(18,0,18,0); self._hist_list_lay.setSpacing(4)
-        lay.addWidget(self._hist_list_w); lay.addStretch()
+    # ══════════════════════════════════════════════
+    #  HISTORY
+    # ══════════════════════════════════════════════
+    def _build_history(self):
+        f = self._tab_frames["history"]
+        top = tk.Frame(f, bg=BG)
+        top.pack(fill="x", padx=16, pady=(14,8))
+        tk.Label(top, text="Miesiąc:", font=("Segoe UI",10),
+                 fg=MUTED, bg=BG).pack(side="left", padx=(0,8))
+        self._hist_month = tk.StringVar()
+        self._hist_cb = tk.OptionMenu(top, self._hist_month, "(brak)")
+        self._hist_cb.configure(font=("Segoe UI",10), bg=SURFACE,
+                                 relief="solid", bd=1, width=25)
+        self._hist_cb.pack(side="left")
+        self._hist_month.trace_add("write",
+                                    lambda *_: self._render_history())
+        self._hist_list = tk.Frame(f, bg=BG)
+        self._hist_list.pack(fill="both", expand=True, padx=16)
 
     def _load_history(self):
         months = db.get_months()
-        self._hist_cb.blockSignals(True); self._hist_cb.clear()
+        menu = self._hist_cb["menu"]
+        menu.delete(0, "end")
         if months:
-            for m in months:
-                self._hist_cb.addItem(self._fmt_month(m) + f"  [{m}]")
+            labels = [self._fmt_month(m)+f"  [{m}]" for m in months]
+            for lbl in labels:
+                menu.add_command(label=lbl,
+                                  command=lambda l=lbl:
+                                  self._hist_month.set(l))
+            cur = self._hist_month.get()
+            if not cur or cur not in labels:
+                self._hist_month.set(labels[0])
+            else:
+                self._render_history()
         else:
-            self._hist_cb.addItem("(brak)")
-        self._hist_cb.blockSignals(False); self._render_history()
+            menu.add_command(label="(brak)")
+            self._hist_month.set("(brak)")
+            self._render_history()
 
     def _render_history(self):
-        while self._hist_list_lay.count():
-            item = self._hist_list_lay.takeAt(0)
-            if item.widget(): item.widget().setParent(None)
-        val = self._hist_cb.currentText()
-        if "(brak)" in val: return
+        for w in self._hist_list.winfo_children(): w.destroy()
+        val = self._hist_month.get()
+        if not val or "(brak)" in val: return
         month = val.split("[")[-1].rstrip("]").strip()
         entries = db.get_days_for_month(month)
         if not entries:
-            self._hist_list_lay.addWidget(_lbl("Brak wpisów.", 11, color=MUTED))
+            tk.Label(self._hist_list, text="Brak wpisów w tym miesiącu.",
+                     font=("Segoe UI",11), fg=MUTED,
+                     bg=BG).pack(pady=30)
             return
         for entry_date, data in reversed(entries):
             self._hist_card(entry_date, data)
-        self._hist_list_lay.addStretch()
 
-    def _hist_card(self, entry_date: str, data: dict):
-        beers = data.get("kegs", [])
-        tot = sum(
-            db.calc_diff(
-                k,
-                data["pos"][i]  if i < len(data.get("pos",[])) else {"sizes":[]},
-                data["corr"][i] if i < len(data.get("corr",[])) else {})
-            for i, k in enumerate(beers))
+    def _hist_card(self, entry_date, data):
+        beers    = data.get("kegs", [])
+        # Safe diff calculation
+        tot_diff = 0
+        for i, k in enumerate(beers):
+            pe = data["pos"][i]  if i < len(data.get("pos",[])) else {"sizes":[]}
+            co = data["corr"][i] if i < len(data.get("corr",[])) else {}
+            try: tot_diff += db.calc_diff(k, pe, co)
+            except: pass
         tot_pos = sum(db.pos_liters(p) for p in data.get("pos", []))
         tot_del = sum(int(k.get("delivery",0) or 0) for k in beers)
-        s = db.diff_status(tot); col, bg = DIFF_COLORS[s]
+        status  = db.diff_status(tot_diff)
+        col, bg = DIFF_COLORS[status]
 
-        card = QFrame()
-        card.setStyleSheet(
-            f"QFrame{{background:{SURFACE};border:1px solid {BORDER};"
-            f"border-radius:8px;}}")
-        cv = QVBoxLayout(card); cv.setContentsMargins(0,0,0,0); cv.setSpacing(0)
+        card = tk.Frame(self._hist_list, bg=SURFACE, bd=1,
+                        relief="solid",
+                        highlightbackground=BORDER,
+                        highlightthickness=1)
+        card.pack(fill="x", pady=4)
 
         # Header
-        hdr = QFrame()
-        hdr.setStyleSheet(f"background:{PREV_BG};border-radius:8px 8px 0 0;")
-        hl = QHBoxLayout(hdr); hl.setContentsMargins(14,8,14,8)
-        hl.addWidget(_lbl(self._fmt_date(entry_date), 11, bold=True))
+        hdr = tk.Frame(card, bg="#f0ede6")
+        hdr.pack(fill="x")
+        tk.Label(hdr, text=self._fmt_date(entry_date),
+                 font=("Segoe UI",10,"bold"), fg=TEXT,
+                 bg="#f0ede6").pack(side="left", padx=12, pady=6)
         if tot_del:
-            dc = QFrame(); dc.setStyleSheet(f"background:{GOLD_BG};border-radius:5px;")
-            dcl = QHBoxLayout(dc); dcl.setContentsMargins(6,2,6,2)
-            dcl.addWidget(_lbl(f"🚚 Dostawa: {tot_del} keg", 10, color=GOLD))
-            hl.addWidget(dc)
-        hl.addStretch()
-        hl.addWidget(_lbl(f"POS: {tot_pos:.1f}L", 10, color=MUTED))
-        diff_chip, diff_lbl = _chip_frame(
-            f"  {DIFF_ICONS[s]} {tot:+.2f}L  ", col, bg)
-        hl.addWidget(diff_chip); cv.addWidget(hdr)
+            tk.Label(hdr, text=f"🚚 Dostawa: {tot_del} keg",
+                     font=("Segoe UI",9), fg=GOLD,
+                     bg=GOLD_BG).pack(side="left", padx=6)
+        tk.Label(hdr, text=f"POS: {tot_pos:.1f}L",
+                 font=("Segoe UI",9), fg=MUTED,
+                 bg="#f0ede6").pack(side="right", padx=12)
+        cf = tk.Frame(hdr, bg=bg)
+        cf.pack(side="right", padx=6, pady=6)
+        tk.Label(cf, text=f" {DIFF_ICONS[status]} {tot_diff:+.2f}L ",
+                 font=("Segoe UI",10,"bold"), fg=col,
+                 bg=bg).pack(padx=4, pady=2)
 
         # Body
-        body = QWidget(); body.setStyleSheet("background:transparent;")
-        bl = QVBoxLayout(body); bl.setContentsMargins(14,10,14,10); bl.setSpacing(2)
+        body = tk.Frame(card, bg=SURFACE)
+        body.pack(fill="x", padx=12, pady=8)
+
+        # Bars per beer
         for i, keg in enumerate(beers):
             pe = data["pos"][i]  if i < len(data.get("pos",[])) else {"sizes":[]}
             co = data["corr"][i] if i < len(data.get("corr",[])) else {}
-            d2 = db.calc_diff(keg, pe, co)
-            s2 = db.diff_status(d2); c2, _ = DIFF_COLORS[s2]
-            brow = QWidget(); brow.setStyleSheet("background:transparent;")
-            brl = QHBoxLayout(brow); brl.setContentsMargins(0,0,0,0)
-            nl = _lbl(keg["name"], 10); nl.setFixedWidth(90); brl.addWidget(nl)
-            brl.addStretch()
-            brl.addWidget(_lbl(f"{DIFF_ICONS[s2]} {d2:+.2f}L", 10, color=c2))
-            bl.addWidget(brow)
+            try:
+                diff = db.calc_diff(keg, pe, co)
+            except:
+                diff = 0.0
+            s = db.diff_status(diff); c, _ = DIFF_COLORS[s]
+            br = tk.Frame(body, bg=SURFACE)
+            br.pack(fill="x", pady=1)
+            tk.Label(br, text=keg["name"], font=("Segoe UI",9),
+                     fg=TEXT, bg=SURFACE, width=10,
+                     anchor="w").pack(side="left")
+            tk.Label(br, text=f"{DIFF_ICONS[s]} {diff:+.2f}L",
+                     font=("Consolas",9,"bold"), fg=c,
+                     bg=SURFACE, width=12,
+                     anchor="e").pack(side="right")
 
-        # Buttons
-        det_frame = QWidget(); det_frame.setStyleSheet("background:transparent;")
-        det_lay = QVBoxLayout(det_frame)
-        det_lay.setContentsMargins(0,8,0,0); det_frame.setVisible(False)
+        # Buttons row
+        btn_f = tk.Frame(body, bg=SURFACE)
+        btn_f.pack(fill="x", pady=(6,0))
 
-        btn_row = QWidget(); btn_row.setStyleSheet("background:transparent;")
-        brl2 = QHBoxLayout(btn_row); brl2.setContentsMargins(0,8,0,0); brl2.setSpacing(8)
-        det_btn = _btn("🔍 Pokaż szczegóły", bg=GOLD_BG, fg=GOLD,
-                        w=160, h=30, bold=False, border=BORDER)
-        edit_btn = _btn("✏️ Edytuj", w=110, h=30)
-        edit_btn.clicked.connect(
-            lambda _, ed=entry_date, d=data: self._open_edit(ed, d))
-
+        # Detail frame — created once, toggled
+        det_frame = tk.Frame(body, bg=SURFACE)
         state = {"open": False}
-        def toggle(s=state, df=det_frame, dl=det_lay, db2=det_btn, d=data):
-            s["open"] = not s["open"]
+
+        def toggle_det(df=det_frame, s=state, e=entry_date, d=data):
             if s["open"]:
-                self._fill_det_table(dl, d); df.setVisible(True)
-                db2.setText("🔍 Ukryj szczegóły")
+                df.pack_forget(); s["open"] = False
+                det_btn.configure(text="🔍 Pokaż szczegóły")
             else:
-                df.setVisible(False); db2.setText("🔍 Pokaż szczegóły")
+                # Clear and rebuild detail table safely
+                for w in df.winfo_children(): w.destroy()
+                try:
+                    self._build_det_table(df, d)
+                except Exception as ex:
+                    tk.Label(df, text=f"Błąd: {ex}",
+                             fg=RED, bg=SURFACE,
+                             font=("Segoe UI",9)).pack()
+                df.pack(fill="x"); s["open"] = True
+                det_btn.configure(text="🔍 Ukryj szczegóły")
 
-        det_btn.clicked.connect(toggle)
-        brl2.addWidget(det_btn); brl2.addWidget(edit_btn); brl2.addStretch()
-        bl.addWidget(btn_row); bl.addWidget(det_frame)
-        cv.addWidget(body); self._hist_list_lay.addWidget(card)
+        det_btn = make_btn(btn_f, "🔍 Pokaż szczegóły", toggle_det,
+                           bg=GOLD_BG, fg=GOLD,
+                           font=("Segoe UI",9), padx=8, pady=3)
+        det_btn.pack(side="left", padx=(0,8))
+        make_btn(btn_f, "✏️ Edytuj",
+                 lambda e=entry_date, d=data: self._open_edit(e, d),
+                 font=("Segoe UI",9), padx=8, pady=3).pack(side="left")
 
-    def _fill_det_table(self, lay: QVBoxLayout, data: dict):
-        while lay.count():
-            item = lay.takeAt(0)
-            if item.widget(): item.widget().setParent(None)
+    def _build_det_table(self, parent, data):
+        """Build detail table safely — no crash."""
         sizes = db.get_sizes()
-        frm = QFrame()
-        frm.setStyleSheet(
-            f"QFrame{{background:{SURFACE};border:1px solid {BORDER};"
-            f"border-radius:6px;}}")
-        gl = QGridLayout(frm); gl.setContentsMargins(4,4,4,4); gl.setSpacing(3)
-        hdrs = (["Piwo","START","Del","Pełne END","kg#1","kg#2","kg#3","END(L)"]
-                + [sz["label"] for sz in sizes]
-                + ["Spill","Void","Open Bar","RÓŻNICA"])
-        for ci, h in enumerate(hdrs):
-            l = _lbl(h, 8, bold=True, color=GOLD)
-            l.setAlignment(Qt.AlignmentFlag.AlignCenter); gl.addWidget(l, 0, ci)
-        for ri, keg in enumerate(data.get("kegs", [])):
-            pe   = data["pos"][ri]  if ri < len(data.get("pos",[])) else {"sizes":[]}
-            co   = data["corr"][ri] if ri < len(data.get("corr",[])) else {}
-            diff = db.calc_diff(keg, pe, co)
-            s    = db.diff_status(diff); col, bg = DIFF_COLORS[s]
-            ow   = keg.get("open_end") or [None,None,None]
-            vals = (
-                [keg["name"],
-                 f"{db.keg_start_liters(keg):.1f}",
-                 str(keg.get("delivery",0)), str(keg.get("full_end",0)),
-                 str(ow[0] or "—"), str(ow[1] if len(ow)>1 else "—"),
-                 str(ow[2] if len(ow)>2 else "—"),
-                 f"{db.keg_end_liters(keg):.2f}"]
-                + [str(sz.get("qty",0) or 0) for sz in pe.get("sizes",[])]
-                + [str(co.get("spill",0) or 0),
-                   str(co.get("void_",0) or 0),
-                   str(co.get("open_bar",0) or 0),
-                   f"{DIFF_ICONS[s]} {diff:+.2f}L"])
-            for ci, v in enumerate(vals):
-                is_d = ci == len(vals)-1
-                l = _lbl(v, 9, color=(col if is_d else TEXT))
-                l.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                if is_d:
-                    l.setStyleSheet(
-                        f"color:{col};background:{bg};border-radius:4px;")
-                gl.addWidget(l, ri+1, ci)
-        lay.addWidget(frm)
+        # Header
+        hf = tk.Frame(parent, bg=GOLD_BG)
+        hf.pack(fill="x", pady=(6,0))
+        cols = (["Piwo","START","Del","Pełne","kg#1","kg#2","kg#3","END(L)"] +
+                [sz["label"] for sz in sizes] +
+                ["Spill","Void","OpenBar","RÓŻNICA"])
+        ws   = ([10,6,4,5,6,6,6,6] +
+                [5]*len(sizes) + [5,5,7,9])
+        for h, w in zip(cols, ws):
+            tk.Label(hf, text=h, font=("Segoe UI",8,"bold"),
+                     fg=GOLD, bg=GOLD_BG, width=w,
+                     anchor="center").pack(side="left", padx=1, pady=3)
 
-    def _open_edit(self, entry_date: str, data: dict):
-        self.ev_date.setText(entry_date)
+        for ri, keg in enumerate(data.get("kegs",[])):
+            pe   = data["pos"][ri]  if ri<len(data.get("pos",[])) else {"sizes":[]}
+            co   = data["corr"][ri] if ri<len(data.get("corr",[])) else {}
+            try:
+                diff = db.calc_diff(keg, pe, co)
+            except:
+                diff = 0.0
+            s = db.diff_status(diff); dcol, dbg = DIFF_COLORS[s]
+            ow = keg.get("open_end") or []
+            row_vals = ([keg["name"],
+                         f"{db.keg_start_liters(keg):.1f}",
+                         str(keg.get("delivery",0)),
+                         str(keg.get("full_end",0)),
+                         str(ow[0] if len(ow)>0 and ow[0] else "—"),
+                         str(ow[1] if len(ow)>1 and ow[1] else "—"),
+                         str(ow[2] if len(ow)>2 and ow[2] else "—"),
+                         f"{db.keg_end_liters(keg):.2f}"] +
+                        [str(sz.get("qty",0) or 0)
+                         for sz in pe.get("sizes",[])] +
+                        [str(co.get("spill",0) or 0),
+                         str(co.get("void_",0) or 0),
+                         str(co.get("open_bar",0) or 0),
+                         f"{DIFF_ICONS[s]} {diff:+.2f}L"])
+            rf = tk.Frame(parent, bg=SURFACE)
+            rf.pack(fill="x")
+            for ci, (v, w) in enumerate(zip(row_vals, ws)):
+                is_diff = ci == len(row_vals)-1
+                tk.Label(rf, text=v,
+                         font=("Segoe UI", 8, "bold" if is_diff else "normal"),
+                         fg=(dcol if is_diff else TEXT),
+                         bg=(dbg if is_diff else SURFACE),
+                         width=w, anchor="center",
+                         relief="flat").pack(side="left", padx=1, pady=1)
+
+    def _open_edit(self, entry_date, data):
+        self.ev_date.set(entry_date)
         beers = db.get_beers(); sizes = db.get_sizes()
-        self._build_keg_inputs(beers); self._build_pos_inputs(beers, sizes)
+        self._build_keg_inputs(beers)
+        self._build_pos_inputs(beers, sizes)
         self._build_corr_inputs(beers)
         for i, rw in enumerate(self._kw):
             if i >= len(data.get("kegs",[])): continue
             keg = data["kegs"][i]
             rw["_start_l"] = float(keg.get("start_l",0) or 0)
-            rw["start_lbl"].setText(f"{rw['_start_l']:.2f} L")
-            rw["delivery"].setText(str(keg.get("delivery","") or ""))
-            rw["full_end"].setText(str(keg.get("full_end","") or ""))
+            rw["start_lbl"].configure(text=f"{rw['_start_l']:.1f}L")
+            rw["delivery"].set(str(keg.get("delivery","") or ""))
+            rw["full_end"].set(str(keg.get("full_end","") or ""))
             ow = keg.get("open_end") or [None,None,None]
             for j, v in enumerate(rw["open_end"]):
-                v.setText(str(ow[j]) if j < len(ow) and ow[j] else "")
+                v.set(str(ow[j]) if j<len(ow) and ow[j] else "")
         for i, pw in enumerate(self._pw):
             if i >= len(data.get("pos",[])): continue
             pe = data["pos"][i]
             for j, sv in enumerate(pw["sizes"]):
                 if j < len(pe.get("sizes",[])):
-                    sv["entry"].setText(str(pe["sizes"][j].get("qty","") or ""))
+                    sv["var"].set(str(pe["sizes"][j].get("qty","") or ""))
         for i, cw in enumerate(self._cw):
             if i >= len(data.get("corr",[])): continue
             co = data["corr"][i]
-            cw["spill"].setText(str(co.get("spill","") or ""))
-            cw["void_"].setText(str(co.get("void_","") or ""))
-            cw["open_bar"].setText(str(co.get("open_bar","") or ""))
-        self._recalc(); self.show_tab("entry")
+            cw["spill"].set(str(co.get("spill","") or ""))
+            cw["void_"].set(str(co.get("void_","") or ""))
+            cw["open_bar"].set(str(co.get("open_bar","") or ""))
+        self._recalc()
+        self.show_tab("entry")
 
-    # ══════════════════════════════════════════════════════════════════
-    #  REPORT TAB
-    # ══════════════════════════════════════════════════════════════════
-    def _build_report_tab(self):
-        lay = self._tab_lay["report"]
-        top = QWidget(); top.setStyleSheet("background:transparent;")
-        tl = QHBoxLayout(top); tl.setContentsMargins(18,14,18,8); tl.setSpacing(8)
-        tl.addWidget(_lbl("Miesiąc:", 11, color=MUTED))
-        self._rep_cb = QComboBox()
-        self._rep_cb.setFixedWidth(240); self._rep_cb.setFixedHeight(34)
-        self._rep_cb.addItem("(brak)")
-        self._rep_cb.currentIndexChanged.connect(self._render_report)
-        tl.addWidget(self._rep_cb)
-        em = _btn("📥 Export Excel (miesiąc)", h=34)
-        em.clicked.connect(self._export_month); tl.addWidget(em)
-        ey = _btn("📥 Export Excel (rok)", bg=GOLD_BG, fg=GOLD,
-                   h=34, bold=False, border=BORDER)
-        ey.clicked.connect(self._export_year); tl.addWidget(ey)
-        tl.addStretch(); lay.addWidget(top)
-
-        self._rep_body_w = QWidget(); self._rep_body_w.setStyleSheet("background:transparent;")
-        self._rep_body = QVBoxLayout(self._rep_body_w)
-        self._rep_body.setContentsMargins(18,0,18,0); self._rep_body.setSpacing(4)
-        lay.addWidget(self._rep_body_w); lay.addStretch()
+    # ══════════════════════════════════════════════
+    #  REPORT
+    # ══════════════════════════════════════════════
+    def _build_report(self):
+        f = self._tab_frames["report"]
+        top = tk.Frame(f, bg=BG)
+        top.pack(fill="x", padx=16, pady=(14,8))
+        tk.Label(top, text="Miesiąc:", font=("Segoe UI",10),
+                 fg=MUTED, bg=BG).pack(side="left", padx=(0,8))
+        self._rep_month = tk.StringVar()
+        self._rep_cb = tk.OptionMenu(top, self._rep_month, "(brak)")
+        self._rep_cb.configure(font=("Segoe UI",10), bg=SURFACE,
+                                relief="solid", bd=1, width=25)
+        self._rep_cb.pack(side="left", padx=(0,12))
+        self._rep_month.trace_add("write",
+                                   lambda *_: self._render_report())
+        make_btn(top, "📥 Export Excel (miesiąc)",
+                 self._export_month,
+                 font=("Segoe UI",9), padx=8, pady=4).pack(
+            side="left", padx=(0,8))
+        make_btn(top, "📥 Export Excel (rok)",
+                 self._export_year,
+                 bg=GOLD_BG, fg=GOLD,
+                 font=("Segoe UI",9), padx=8, pady=4).pack(side="left")
+        self._rep_body = tk.Frame(f, bg=BG)
+        self._rep_body.pack(fill="both", expand=True, padx=16)
 
     def _load_report(self):
         months = db.get_months()
-        self._rep_cb.blockSignals(True); self._rep_cb.clear()
+        menu = self._rep_cb["menu"]
+        menu.delete(0,"end")
         if months:
-            for m in months:
-                self._rep_cb.addItem(self._fmt_month(m) + f"  [{m}]")
+            labels = [self._fmt_month(m)+f"  [{m}]" for m in months]
+            for lbl in labels:
+                menu.add_command(label=lbl,
+                                  command=lambda l=lbl:
+                                  self._rep_month.set(l))
+            cur = self._rep_month.get()
+            if not cur or cur not in labels:
+                self._rep_month.set(labels[0])
+            else:
+                self._render_report()
         else:
-            self._rep_cb.addItem("(brak)")
-        self._rep_cb.blockSignals(False); self._render_report()
+            menu.add_command(label="(brak)")
+            self._rep_month.set("(brak)")
 
     def _render_report(self):
-        while self._rep_body.count():
-            item = self._rep_body.takeAt(0)
-            if item.widget(): item.widget().setParent(None)
-        val = self._rep_cb.currentText()
-        if "(brak)" in val: return
-        month = val.split("[")[-1].rstrip("]").strip()
+        for w in self._rep_body.winfo_children(): w.destroy()
+        val = self._rep_month.get()
+        if not val or "(brak)" in val: return
+        month   = val.split("[")[-1].rstrip("]").strip()
         entries = db.get_days_for_month(month)
         if not entries:
-            self._rep_body.addWidget(_lbl("Brak wpisów.", 11, color=MUTED))
+            tk.Label(self._rep_body, text="Brak wpisów.",
+                     font=("Segoe UI",11), fg=MUTED,
+                     bg=BG).pack(pady=30)
             return
-
         tot_days = len(entries)
         tot_del  = sum(sum(int(k.get("delivery",0) or 0)
                            for k in d.get("kegs",[])) for _,d in entries)
@@ -990,44 +979,41 @@ class App(QMainWindow):
         tot_corr = sum(sum(db.corr_liters(c)
                            for c in d.get("corr",[])) for _,d in entries)
         tot_diff = sum(
-            db.calc_diff(
-                k,
-                d["pos"][i]  if i<len(d.get("pos",[])) else {"sizes":[]},
-                d["corr"][i] if i<len(d.get("corr",[])) else {})
-            for _,d in entries for i,k in enumerate(d.get("kegs",[])))
+            db.calc_diff(k,
+                         d["pos"][i]  if i<len(d.get("pos",[])) else {"sizes":[]},
+                         d["corr"][i] if i<len(d.get("corr",[])) else {})
+            for _,d in entries
+            for i,k in enumerate(d.get("kegs",[])))
 
         # KPIs
-        kw = QWidget(); kw.setStyleSheet("background:transparent;")
-        kl = QHBoxLayout(kw); kl.setContentsMargins(0,0,0,14); kl.setSpacing(8)
-        ts = db.diff_status(tot_diff); tcol, _ = DIFF_COLORS[ts]
-        for lbl_t, val2, colr in [
-            ("Dni wpisów",   str(tot_days),            GOLD),
-            ("Dostawa",      f"{tot_del} keg",          GOLD),
-            ("Sprzedaż POS", f"{tot_pos:.1f} L",        TEXT),
-            ("Korekty",      f"{tot_corr:.1f} L",       TEXT),
-            ("Różnica",      f"{DIFF_ICONS[ts]} {tot_diff:+.1f} L", tcol),
+        kf = tk.Frame(self._rep_body, bg=BG)
+        kf.pack(fill="x", pady=(0,12))
+        ts = db.diff_status(tot_diff); tcol, tbg = DIFF_COLORS[ts]
+        for lbl, val2, col in [
+            ("Dni",    str(tot_days),           GOLD),
+            ("Dostawa",f"{tot_del} keg",         GOLD),
+            ("POS",    f"{tot_pos:.1f}L",        TEXT),
+            ("Korekty",f"{tot_corr:.1f}L",       TEXT),
+            ("Różnica",f"{DIFF_ICONS[ts]} {tot_diff:+.1f}L", tcol),
         ]:
-            kc = QFrame()
-            kc.setStyleSheet(
-                f"QFrame{{background:{SURFACE};border:1px solid {BORDER};"
-                f"border-radius:8px;}}")
-            kv = QVBoxLayout(kc); kv.setContentsMargins(14,10,14,10)
-            l1 = _lbl(lbl_t, 10, color=MUTED)
-            l1.setAlignment(Qt.AlignmentFlag.AlignCenter); kv.addWidget(l1)
-            l2 = _lbl(val2, 20, bold=True, color=colr)
-            l2.setAlignment(Qt.AlignmentFlag.AlignCenter); kv.addWidget(l2)
-            kl.addWidget(kc)
-        kl.addStretch(); self._rep_body.addWidget(kw)
+            kpi = tk.Frame(kf, bg=SURFACE, bd=1, relief="solid",
+                           highlightbackground=BORDER, highlightthickness=0)
+            kpi.pack(side="left", padx=(0,8))
+            tk.Label(kpi, text=lbl, font=("Segoe UI",9),
+                     fg=MUTED, bg=SURFACE).pack(padx=12, pady=(8,2))
+            tk.Label(kpi, text=val2, font=("Segoe UI",18,"bold"),
+                     fg=col, bg=SURFACE).pack(padx=12, pady=(0,8))
 
         # Per-beer
-        self._rep_body.addWidget(_lbl("Wynik per piwo", 13, bold=True, color=GOLD))
-        self._rep_body.addWidget(_sep())
-        agg = {b["name"]: {"diff":0,"pos":0,"del":0,"days":0}
-               for b in db.get_beers()}
+        self._sec(self._rep_body, "Wynik per piwo")
+        beers_cfg = db.get_beers()
+        agg = {b["name"]:{"diff":0,"pos":0,"del":0,"days":0}
+               for b in beers_cfg}
         for _, data in entries:
             for i, keg in enumerate(data.get("kegs",[])):
-                n = keg["name"]
-                if n not in agg: agg[n] = {"diff":0,"pos":0,"del":0,"days":0}
+                n  = keg["name"]
+                if n not in agg:
+                    agg[n]={"diff":0,"pos":0,"del":0,"days":0}
                 pe = data["pos"][i]  if i<len(data.get("pos",[])) else {"sizes":[]}
                 co = data["corr"][i] if i<len(data.get("corr",[])) else {}
                 agg[n]["diff"] += db.calc_diff(keg, pe, co)
@@ -1035,203 +1021,213 @@ class App(QMainWindow):
                 agg[n]["del"]  += int(keg.get("delivery",0) or 0)
                 agg[n]["days"] += 1
         for n, a in agg.items():
-            diff = round(a["diff"], 2); s = db.diff_status(diff); col, bg = DIFF_COLORS[s]
-            row = QFrame()
-            row.setStyleSheet(
-                f"QFrame{{background:{SURFACE};border:1px solid {BORDER};"
-                f"border-radius:6px;}}")
-            rl = QHBoxLayout(row); rl.setContentsMargins(12,7,12,7)
-            nl = _lbl(n, 11, bold=True); nl.setFixedWidth(100); rl.addWidget(nl)
-            rl.addWidget(_lbl(
-                f"POS: {a['pos']:.1f}L | Del: {a['del']} keg | {a['days']} dni",
-                10, color=MUTED))
-            rl.addStretch()
-            chip, lbl2 = _chip_frame(
-                f"  {DIFF_ICONS[s]} {diff:+.1f}L  ", col, bg)
-            rl.addWidget(chip); self._rep_body.addWidget(row)
+            diff = round(a["diff"],2); s=db.diff_status(diff)
+            col, bg = DIFF_COLORS[s]
+            row = tk.Frame(self._rep_body, bg=SURFACE, bd=1,
+                           relief="solid",
+                           highlightbackground=BORDER,
+                           highlightthickness=0)
+            row.pack(fill="x", pady=2, padx=4)
+            tk.Label(row, text=n, font=("Segoe UI",10,"bold"),
+                     fg=TEXT, bg=SURFACE, width=12,
+                     anchor="w").pack(side="left", padx=10, pady=6)
+            tk.Label(row,
+                     text=f"POS: {a['pos']:.1f}L | "
+                          f"Del: {a['del']} keg | {a['days']} dni",
+                     font=("Segoe UI",9), fg=MUTED,
+                     bg=SURFACE).pack(side="left", padx=8)
+            cf = tk.Frame(row, bg=bg)
+            cf.pack(side="right", padx=10, pady=6)
+            tk.Label(cf, text=f" {DIFF_ICONS[s]} {diff:+.1f}L ",
+                     font=("Segoe UI",10,"bold"), fg=col,
+                     bg=bg).pack(padx=4, pady=2)
 
-        # Daily trend
-        self._rep_body.addWidget(_lbl("Trend dzienny", 13, bold=True, color=GOLD))
-        self._rep_body.addWidget(_sep())
+        # Trend
+        self._sec(self._rep_body, "Trend dzienny")
         for entry_date, data in entries:
             d_diff = sum(
-                db.calc_diff(
-                    k,
-                    data["pos"][i]  if i<len(data.get("pos",[])) else {"sizes":[]},
-                    data["corr"][i] if i<len(data.get("corr",[])) else {})
+                db.calc_diff(k,
+                             data["pos"][i]  if i<len(data.get("pos",[])) else {"sizes":[]},
+                             data["corr"][i] if i<len(data.get("corr",[])) else {})
                 for i,k in enumerate(data.get("kegs",[])))
-            s = db.diff_status(d_diff); col, _ = DIFF_COLORS[s]
-            tr = QWidget(); tr.setStyleSheet("background:transparent;")
-            trl = QHBoxLayout(tr); trl.setContentsMargins(0,1,0,1)
-            dl = _lbl(self._fmt_date(entry_date), 10, color=MUTED)
-            dl.setFixedWidth(80); trl.addWidget(dl); trl.addStretch()
-            vl = _lbl(f"{DIFF_ICONS[s]} {d_diff:+.2f}L", 10, color=col)
-            vl.setFixedWidth(100)
-            vl.setAlignment(Qt.AlignmentFlag.AlignRight); trl.addWidget(vl)
-            self._rep_body.addWidget(tr)
+            s = db.diff_status(d_diff); col,_ = DIFF_COLORS[s]
+            tr = tk.Frame(self._rep_body, bg=BG)
+            tr.pack(fill="x", pady=1, padx=4)
+            tk.Label(tr, text=self._fmt_date(entry_date),
+                     font=("Segoe UI",9), fg=MUTED, bg=BG,
+                     width=14, anchor="w").pack(side="left")
+            tk.Label(tr, text=f"{DIFF_ICONS[s]} {d_diff:+.2f}L",
+                     font=("Consolas",9,"bold"), fg=col,
+                     bg=BG, width=12, anchor="e").pack(side="right")
 
     def _export_month(self):
-        val = self._rep_cb.currentText()
-        if "(brak)" in val:
-            QMessageBox.warning(self, "Brak", "Wybierz miesiąc"); return
+        val = self._rep_month.get()
+        if not val or "(brak)" in val:
+            messagebox.showwarning("Brak","Wybierz miesiąc"); return
         month = val.split("[")[-1].rstrip("]").strip()
-        p, _ = QFileDialog.getSaveFileName(
-            self, "Zapisz Excel", f"BeerCount_{month}.xlsx", "Excel (*.xlsx)")
+        p = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Excel","*.xlsx")],
+            initialfile=f"BeerCount_{month}.xlsx")
         if not p: return
         if xl.export_month(month, p):
-            QMessageBox.information(self, "OK", f"Zapisano:\n{p}")
+            messagebox.showinfo("OK", f"Zapisano:\n{p}")
         else:
-            QMessageBox.critical(self, "Błąd", "Brak danych")
+            messagebox.showerror("Błąd","Brak danych")
 
     def _export_year(self):
-        val = self._rep_cb.currentText()
+        val  = self._rep_month.get()
         year = val.split("[")[-1][:4] if "[" in val else str(date.today().year)
-        p, _ = QFileDialog.getSaveFileName(
-            self, "Zapisz Excel", f"BeerCount_{year}_roczny.xlsx", "Excel (*.xlsx)")
+        p = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Excel","*.xlsx")],
+            initialfile=f"BeerCount_{year}_roczny.xlsx")
         if not p: return
         if xl.export_year(year, p):
-            QMessageBox.information(self, "OK", f"Zapisano:\n{p}")
+            messagebox.showinfo("OK", f"Zapisano:\n{p}")
         else:
-            QMessageBox.critical(self, "Błąd", f"Brak danych dla roku {year}")
+            messagebox.showerror("Błąd",f"Brak danych dla roku {year}")
 
-    # ══════════════════════════════════════════════════════════════════
-    #  SETTINGS TAB
-    # ══════════════════════════════════════════════════════════════════
-    def _build_settings_tab(self):
-        lay = self._tab_lay["settings"]
+    # ══════════════════════════════════════════════
+    #  SETTINGS — fixed add/remove
+    # ══════════════════════════════════════════════
+    def _build_settings(self):
+        f = self._tab_frames["settings"]
 
-        bc = self._card("settings", "🍺  Piwa na krane")
-        self._set_beers_lay = bc
-        add_b = _btn("+ Dodaj piwo", bg=GOLD_BG, fg=GOLD, w=130, h=30,
-                      bold=False, border=BORDER)
-        add_b.clicked.connect(self._add_beer); bc.addWidget(add_b)
+        c1 = self._card(f, "🍺  Piwa na krane", fill="x", padx=16, pady=(14,6))
+        self._set_beers_f = tk.Frame(c1, bg=SURFACE)
+        self._set_beers_f.pack(fill="x")
+        make_btn(c1, "+ Dodaj piwo", self._add_beer,
+                 bg=GOLD_BG, fg=GOLD,
+                 font=("Segoe UI",9), padx=8, pady=3).pack(
+            anchor="w", pady=(6,0))
 
-        sc = self._card("settings", "🥃  Rozmiary porcji POS")
-        self._set_sizes_lay = sc
-        add_s = _btn("+ Dodaj rozmiar", bg=GOLD_BG, fg=GOLD, w=140, h=30,
-                      bold=False, border=BORDER)
-        add_s.clicked.connect(self._add_size); sc.addWidget(add_s)
+        c2 = self._card(f, "🥃  Rozmiary porcji POS",
+                        fill="x", padx=16, pady=(0,6))
+        self._set_sizes_f = tk.Frame(c2, bg=SURFACE)
+        self._set_sizes_f.pack(fill="x")
+        make_btn(c2, "+ Dodaj rozmiar", self._add_size,
+                 bg=GOLD_BG, fg=GOLD,
+                 font=("Segoe UI",9), padx=8, pady=3).pack(
+            anchor="w", pady=(6,0))
 
-        brow = QWidget(); brow.setStyleSheet("background:transparent;")
-        brl = QHBoxLayout(brow); brl.setContentsMargins(18,14,18,6)
-        sb = _btn("💾  Zapisz ustawienia", w=200, h=40)
-        sb.clicked.connect(self._save_settings); brl.addWidget(sb)
-        brl.addStretch(); lay.addWidget(brow)
+        bf = tk.Frame(f, bg=BG)
+        bf.pack(fill="x", padx=16, pady=8)
+        make_btn(bf, "💾  Zapisz ustawienia",
+                 self._save_settings).pack(side="left", padx=(0,10))
+        make_btn(bf, "🔄  Kreator pierwszego uruchomienia",
+                 self._rerun_wizard,
+                 bg=SURFACE, fg=MUTED,
+                 font=("Segoe UI",9), padx=8, pady=4).pack(side="left")
 
-        ww = QWidget(); ww.setStyleSheet("background:transparent;")
-        wwl = QHBoxLayout(ww); wwl.setContentsMargins(18,0,18,6)
-        wb = _btn(
-            "🔄  Uruchom ponownie kreator pierwszego uruchomienia",
-            bg=SURFACE, fg=MUTED, w=380, h=36, bold=False, border=BORDER)
-        wb.clicked.connect(self._rerun_wizard)
-        wwl.addWidget(wb); wwl.addStretch(); lay.addWidget(ww)
-        lay.addStretch()
-        self._beer_rows = []; self._size_rows = []
+        # Internal lists — source of truth for settings
+        self._beer_data = []  # list of (name_var, keg_var, frame)
+        self._size_data = []  # list of (label_var, liters_var, frame)
 
     def _load_settings(self):
         self._render_beer_settings(db.get_beers())
         self._render_size_settings(db.get_sizes())
 
     def _render_beer_settings(self, beers):
-        # Remove all but last item (the "Dodaj" button)
-        while self._set_beers_lay.count() > 1:
-            item = self._set_beers_lay.takeAt(0)
-            if item.widget(): item.widget().setParent(None)
-        self._beer_rows = []
-        for i, b in enumerate(beers):
-            row = QWidget(); row.setStyleSheet("background:transparent;")
-            rl = QHBoxLayout(row); rl.setContentsMargins(0,3,0,3); rl.setSpacing(8)
-            ne = _entry(180, ph="PIWO", mono=False); ne.setText(b["name"])
-            rl.addWidget(ne)
-            kc = QComboBox(); kc.addItems(["20","30","50"])
-            kc.setCurrentText(str(b["keg"]))
-            kc.setFixedWidth(80); kc.setFixedHeight(30); rl.addWidget(kc)
-            rl.addWidget(_lbl("L keg", 10, color=MUTED))
-            del_b = QPushButton("✕"); del_b.setFixedSize(30, 28)
-            del_b.setCursor(Qt.CursorShape.PointingHandCursor)
-            del_b.setStyleSheet(
-                f"background:{RED_BG};color:{RED};border-radius:4px;border:none;")
-            def make_del(r, rows=self._beer_rows):
-                def do():
-                    r.setParent(None)
-                    for j, (_, _, rr) in enumerate(rows):
-                        if rr is r: rows.pop(j); break
-                return do
-            del_b.clicked.connect(make_del(row, self._beer_rows))
-            rl.addWidget(del_b); rl.addStretch()
-            self._set_beers_lay.insertWidget(i, row)
-            self._beer_rows.append((ne, kc, row))
+        for w in self._set_beers_f.winfo_children(): w.destroy()
+        self._beer_data = []
+        for b in beers:
+            self._add_beer_row(b["name"], str(b["keg"]))
 
     def _render_size_settings(self, sizes):
-        while self._set_sizes_lay.count() > 1:
-            item = self._set_sizes_lay.takeAt(0)
-            if item.widget(): item.widget().setParent(None)
-        self._size_rows = []
-        for i, s in enumerate(sizes):
-            row = QWidget(); row.setStyleSheet("background:transparent;")
-            rl = QHBoxLayout(row); rl.setContentsMargins(0,3,0,3); rl.setSpacing(8)
-            le = _entry(80, ph="0.5L"); le.setText(s["label"]); rl.addWidget(le)
-            ve = _entry(80, ph="0.5"); ve.setText(str(s["liters"])); rl.addWidget(ve)
-            rl.addWidget(_lbl("L/szt.", 10, color=MUTED))
-            del_b = QPushButton("✕"); del_b.setFixedSize(30, 28)
-            del_b.setCursor(Qt.CursorShape.PointingHandCursor)
-            del_b.setStyleSheet(
-                f"background:{RED_BG};color:{RED};border-radius:4px;border:none;")
-            def make_del(r, rows=self._size_rows):
-                def do():
-                    r.setParent(None)
-                    for j, (_, _, rr) in enumerate(rows):
-                        if rr is r: rows.pop(j); break
-                return do
-            del_b.clicked.connect(make_del(row, self._size_rows))
-            rl.addWidget(del_b); rl.addStretch()
-            self._set_sizes_lay.insertWidget(i, row)
-            self._size_rows.append((le, ve, row))
+        for w in self._set_sizes_f.winfo_children(): w.destroy()
+        self._size_data = []
+        for s in sizes:
+            self._add_size_row(s["label"], str(s["liters"]))
+
+    def _add_beer_row(self, name="NOWE", keg="20"):
+        rf = tk.Frame(self._set_beers_f, bg=SURFACE)
+        rf.pack(fill="x", pady=2)
+        nv = tk.StringVar(value=name)
+        kv = tk.StringVar(value=keg)
+        tk.Entry(rf, textvariable=nv, width=20, font=("Segoe UI",10),
+                 relief="solid", bd=1).pack(side="left", padx=(0,6))
+        om = tk.OptionMenu(rf, kv, "20", "30", "50")
+        om.configure(font=("Segoe UI",10), bg=SURFACE,
+                     relief="solid", bd=1, width=5)
+        om.pack(side="left", padx=(0,4))
+        tk.Label(rf, text="L keg", font=("Segoe UI",9),
+                 fg=MUTED, bg=SURFACE).pack(side="left", padx=(0,8))
+        row_data = (nv, kv, rf)
+        self._beer_data.append(row_data)
+        def remove(rd=row_data):
+            rd[2].destroy()
+            if rd in self._beer_data:
+                self._beer_data.remove(rd)
+        tk.Button(rf, text="✕", font=("Segoe UI",10),
+                  fg=RED, bg=SURFACE, relief="flat",
+                  bd=0, cursor="hand2", padx=4,
+                  command=remove).pack(side="left")
+
+    def _add_size_row(self, label="0.5L", liters="0.5"):
+        rf = tk.Frame(self._set_sizes_f, bg=SURFACE)
+        rf.pack(fill="x", pady=2)
+        lv  = tk.StringVar(value=label)
+        lv2 = tk.StringVar(value=liters)
+        tk.Entry(rf, textvariable=lv, width=8, font=("Consolas",10),
+                 relief="solid", bd=1).pack(side="left", padx=(0,6))
+        tk.Entry(rf, textvariable=lv2, width=8, font=("Consolas",10),
+                 relief="solid", bd=1).pack(side="left", padx=(0,4))
+        tk.Label(rf, text="L/szt.", font=("Segoe UI",9),
+                 fg=MUTED, bg=SURFACE).pack(side="left", padx=(0,8))
+        row_data = (lv, lv2, rf)
+        self._size_data.append(row_data)
+        def remove(rd=row_data):
+            rd[2].destroy()
+            if rd in self._size_data:
+                self._size_data.remove(rd)
+        tk.Button(rf, text="✕", font=("Segoe UI",10),
+                  fg=RED, bg=SURFACE, relief="flat",
+                  bd=0, cursor="hand2", padx=4,
+                  command=remove).pack(side="left")
 
     def _add_beer(self):
-        curr = db.get_beers(); curr.append({"name":"NOWE","keg":20})
-        self._render_beer_settings(curr)
+        self._add_beer_row()
 
     def _add_size(self):
-        curr = db.get_sizes(); curr.append({"label":"0.5L","liters":0.5})
-        self._render_size_settings(curr)
+        self._add_size_row()
 
     def _save_settings(self):
         beers = []
-        for ne, kc, row in self._beer_rows:
-            name = ne.text().strip().upper()
-            if name: beers.append({"name": name, "keg": int(kc.currentText())})
+        for nv, kv, rf in self._beer_data:
+            if not rf.winfo_exists(): continue
+            name = nv.get().strip().upper()
+            try: keg = int(kv.get())
+            except: keg = 20
+            if name: beers.append({"name":name,"keg":keg})
         sizes = []
-        for le, ve, row in self._size_rows:
-            lbl = le.text().strip()
-            try: lit = float(ve.text())
-            except: continue
-            if lbl: sizes.append({"label": lbl, "liters": lit})
+        for lv, lv2, rf in self._size_data:
+            if not rf.winfo_exists(): continue
+            lbl = lv.get().strip()
+            try: lit = float(lv2.get())
+            except: lit = 0.5
+            if lbl: sizes.append({"label":lbl,"liters":lit})
         db.save_beers(beers); db.save_sizes(sizes)
-        self._tab_cache.discard("entry")
-        QMessageBox.information(self, "Zapisano", "Ustawienia zapisane ✓")
+        messagebox.showinfo("Zapisano","Ustawienia zapisane ✓")
 
     def _rerun_wizard(self):
-        self._build_wizard(); self._show_raw("wizard")
+        self._build_wizard()
+        self._show("wizard")
 
-    # ── Helpers ──────────────────────────────────────────────────────
-    def _fmt_date(self, d: str) -> str:
+    # ── Helpers ───────────────────────────────────
+    def _fmt_date(self, d):
         try:
             dt = datetime.strptime(d, "%Y-%m-%d")
             days = ["Pon","Wt","Śr","Czw","Pt","Sob","Ndz"]
             return f"{days[dt.weekday()]} {dt.day:02d}.{dt.month:02d}.{dt.year}"
         except: return d
 
-    def _fmt_month(self, m: str) -> str:
+    def _fmt_month(self, m):
         MO = {"01":"Styczeń","02":"Luty","03":"Marzec","04":"Kwiecień",
               "05":"Maj","06":"Czerwiec","07":"Lipiec","08":"Sierpień",
               "09":"Wrzesień","10":"Październik","11":"Listopad","12":"Grudzień"}
-        y, mo = m.split("-"); return f"{MO.get(mo,mo)} {y}"
+        y, mo = m.split("-")
+        return f"{MO.get(mo,mo)} {y}"
 
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    window = App()
-    window.show()
-    sys.exit(app.exec())
+    app = App()
+    app.mainloop()
