@@ -10,6 +10,7 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 import database as db
 import export_excel as xl
+import pos_import
 from datetime import date, timedelta, datetime
 
 GOLD    = "#9a6f1e"; GOLD_LT  = "#c9a84c"; GOLD_BG  = "#fdf3df"
@@ -371,6 +372,11 @@ class App(tk.Tk):
                      font=("Segoe UI",9), padx=8, pady=4).pack(
                 side="left", padx=5)
         self.ev_date.trace_add("write", lambda *_: self._load_prev_starts())
+        make_btn(dr, "📂 Importuj POS (xlsx)",
+                 self._import_pos_xlsx,
+                 bg="#e8f4fd", fg="#1a5276",
+                 font=("Segoe UI",9), padx=8, pady=4).pack(
+            side="left", padx=(14,0))
 
         # ── 3-column row ──────────────────────────
         cols = tk.Frame(f, bg=BG)
@@ -716,6 +722,142 @@ class App(tk.Tk):
             text=f" {DIFF_ICONS[ts]} {tot_diff:+.2f}L ",
             fg=tcol, bg=tbg)
 
+
+    def _import_pos_xlsx(self):
+        """Import POS sales from IzzyRest XLSX file."""
+        filepath = filedialog.askopenfilename(
+            title="Wybierz plik XLSX z IzzyRest",
+            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")])
+        if not filepath:
+            return
+
+        try:
+            # Parse file
+            all_dates = pos_import.get_available_dates(filepath)
+        except ValueError as e:
+            messagebox.showerror("Błąd importu", str(e))
+            return
+
+        if not all_dates:
+            messagebox.showwarning("Brak danych", "Plik nie zawiera danych sprzedaży.")
+            return
+
+        # Ask which date to import
+        current_date = self.ev_date.get().strip()
+
+        if current_date in all_dates:
+            # Auto-match current date
+            chosen_date = current_date
+        else:
+            # Show date picker dialog
+            chosen_date = self._pick_date_dialog(all_dates, current_date)
+            if not chosen_date:
+                return
+
+        try:
+            sales = pos_import.get_sales_for_date(filepath, chosen_date)
+        except ValueError as e:
+            messagebox.showerror("Błąd", str(e))
+            return
+
+        if not sales:
+            messagebox.showwarning("Brak danych",
+                f"Brak sprzedaży w pliku dla daty {chosen_date}.")
+            return
+
+        # Set date
+        self.ev_date.set(chosen_date)
+
+        # Fill POS fields
+        filled = 0
+        not_found = []
+        for pw in self._pw:
+            beer_name = pw["name"]
+            beer_sales = sales.get(beer_name, {})
+            for sv in pw["sizes"]:
+                size_label = sv.get("label") or ""
+                # Try to find matching size
+                qty = beer_sales.get(size_label, 0)
+                # Also try without "L" suffix variations
+                if qty == 0:
+                    for key, val in beer_sales.items():
+                        if key.replace("L","").replace("l","").strip() ==                            size_label.replace("L","").replace("l","").strip():
+                            qty = val
+                            break
+                if qty > 0:
+                    sv["var"].set(str(qty))
+                    filled += 1
+                # Don't clear fields that already have values if no match
+            if not beer_sales and beer_name in ["ŻYWIEC","HEINEKEN","MURPHYS","BIAŁE","IPA","BIAŁE 0%"]:
+                not_found.append(beer_name)
+
+        self._recalc()
+
+        msg = f"✅ Zaimportowano sprzedaż z dnia {chosen_date}\n{filled} pól uzupełnionych."
+        if not_found:
+            msg += f"\n\nBrak danych dla: {', '.join(not_found)}"
+        messagebox.showinfo("Import POS", msg)
+
+    def _pick_date_dialog(self, available_dates: list, current_date: str):
+        """Simple dialog to pick a date from available dates."""
+        win = tk.Toplevel(self)
+        win.title("Wybierz datę importu")
+        win.geometry("340x420")
+        win.configure(bg=BG)
+        win.grab_set()
+        win.resizable(False, False)
+
+        tk.Label(win, text="Dostępne daty w pliku:",
+                 font=("Segoe UI",10,"bold"), fg=GOLD, bg=BG).pack(
+            pady=(14,6))
+        tk.Label(win,
+                 text=f"Data w aplikacji: {current_date}",
+                 font=("Segoe UI",9), fg=MUTED, bg=BG).pack(pady=(0,8))
+
+        # Listbox
+        frame = tk.Frame(win, bg=BG)
+        frame.pack(fill="both", expand=True, padx=14, pady=(0,8))
+        sb = tk.Scrollbar(frame)
+        sb.pack(side="right", fill="y")
+        lb = tk.Listbox(frame, yscrollcommand=sb.set,
+                        font=("Segoe UI",10), selectmode="single",
+                        bg=SURFACE, fg=TEXT, selectbackground=GOLD,
+                        selectforeground="white", relief="solid", bd=1)
+        lb.pack(side="left", fill="both", expand=True)
+        sb.config(command=lb.yview)
+
+        for d in reversed(available_dates):
+            lb.insert("end", d)
+
+        # Pre-select closest date
+        for i, d in enumerate(reversed(available_dates)):
+            if d <= current_date:
+                lb.selection_set(i)
+                lb.see(i)
+                break
+
+        result = {"date": None}
+
+        def confirm():
+            sel = lb.curselection()
+            if sel:
+                result["date"] = lb.get(sel[0])
+            win.destroy()
+
+        def cancel():
+            win.destroy()
+
+        btn_f = tk.Frame(win, bg=BG)
+        btn_f.pack(pady=8)
+        make_btn(btn_f, "✅ Importuj", confirm,
+                 font=("Segoe UI",10), padx=12, pady=5).pack(
+            side="left", padx=(0,8))
+        make_btn(btn_f, "Anuluj", cancel,
+                 bg=SURFACE, fg=MUTED,
+                 font=("Segoe UI",10), padx=10, pady=5).pack(side="left")
+
+        win.wait_window()
+        return result["date"]
 
     def _save_day(self):
         d = self.ev_date.get().strip()
