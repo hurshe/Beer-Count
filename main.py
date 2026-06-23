@@ -372,7 +372,7 @@ class App(tk.Tk):
                      font=("Segoe UI",9), padx=8, pady=4).pack(
                 side="left", padx=5)
         self.ev_date.trace_add("write", lambda *_: self._load_prev_starts())
-        make_btn(dr, "📂 Importuj POS (xlsx)",
+        make_btn(df, "📂 Importuj POS (xlsx)",
                  self._import_pos_xlsx,
                  bg="#e8f4fd", fg="#1a5276",
                  font=("Segoe UI",9), padx=8, pady=4).pack(
