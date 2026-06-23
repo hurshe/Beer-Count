@@ -548,7 +548,7 @@ class App(tk.Tk):
                 e.grid(row=ri, column=si+1, sticky="ew", padx=2, pady=2)
                 e.bind("<KeyRelease>", lambda _: self._recalc())
                 self._all_entries.append(e)
-                svars.append({"var": sv, "liters": sz["liters"]})
+                svars.append({"var": sv, "liters": sz["liters"], "label": sz["label"]})
             lbl = tk.Label(f, text="0.00L", font=("Consolas",9,"bold"),
                            fg=GOLD, bg=SURFACE, anchor="center")
             lbl.grid(row=ri, column=len(sizes)+1, sticky="ew", padx=2, pady=2)
