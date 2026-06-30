@@ -9,7 +9,7 @@ PRODUCT_MAP = {
     "ŻYWIEC SMALL":          ("ŻYWIEC",    "0.3L"),
     "ŻYWIEC LARGE":          ("ŻYWIEC",    "0.5L"),
     "ŻYWIEC JUG":            ("ŻYWIEC",    "1.5L"),
-    "ŻYWIEC IPA":            ("IPA",       "0.5L"),
+    "ŻYWIEC IPA":            ("IPA",       "0.4L"),
     "ŻYWIEC BIAŁE SMALL":    ("BIAŁE",     "0.3L"),
     "ŻYWIEC BIAŁE LARGE":    ("BIAŁE",     "0.5L"),
     "ŻYWIEC BIAŁE 0% SMALL": ("BIAŁE 0%",  "0.3L"),
@@ -28,6 +28,7 @@ def parse_pos_file(filepath: str) -> dict:
         "2026-06-14": {
             "ŻYWIEC":   {"0.3L": 12, "0.5L": 84, "1.5L": 3},
             "HEINEKEN": {"0.3L": 5,  "0.5L": 22},
+            "IPA":      {"0.4L": 30},
             ...
         },
         ...
