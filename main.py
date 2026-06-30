@@ -1,5 +1,5 @@
 """
-main.py — Beer Count HRC Warsaw v5
+main.py — Beer Count v5
 - 3-column layout: Stan kegów | Sprzedaż POS | Korekty
 - Wynik dnia below
 - Dark/Light theme toggle
@@ -17,14 +17,14 @@ from datetime import date, timedelta, datetime
 #  THEMES — calm, low-contrast palettes
 # ════════════════════════════════════════════════════
 LIGHT = {
-    "GOLD":     "#9a6f1e", "GOLD_LT": "#c9a84c", "GOLD_BG": "#fdf3df",
+    "GOLD":     "#b85c38", "GOLD_LT": "#d68a64", "GOLD_BG": "#f7e6dd",
     "GREEN":    "#2a7a45", "GREEN_BG": "#eaf6ee",
     "RED":      "#b83232", "RED_BG":  "#fdeaea",
     "AMBER":    "#a06010", "AMBER_BG": "#fff4e0",
     "ORANGE":   "#c05000", "ORANGE_BG": "#fff0e0",
-    "BG":       "#f5f2ec", "SURFACE": "#ffffff",
-    "BORDER":   "#ddd8ce", "MUTED":   "#7a7265", "TEXT": "#1a1a1a",
-    "PREV_BG":  "#f0ede6",
+    "BG":       "#eef1f4", "SURFACE": "#ffffff",
+    "BORDER":   "#dde3ea", "MUTED":   "#64748b", "TEXT": "#1e2530",
+    "PREV_BG":  "#e7ebef",
     "INFO_BG":  "#e8f4fd", "INFO_FG": "#1a5276",
 }
 
@@ -137,7 +137,7 @@ class App(tk.Tk):
         CURRENT_MODE = db.get_theme()
         THEME = dict(DARK if CURRENT_MODE == "dark" else LIGHT)
 
-        self.title("🍺 Beer Count — Hard Rock Cafe Warsaw")
+        self.title("🍺 Beer Count")
         self.geometry("1200x780")
         self.minsize(900, 600)
         self.configure(bg=C("BG"))
@@ -173,7 +173,7 @@ class App(tk.Tk):
         self._title_lbl = tk.Label(h, text="🍺  Beer Count", font=("Segoe UI",14,"bold"),
                  fg=C("GOLD"), bg=C("SURFACE"))
         self._title_lbl.pack(side="left", padx=(16,4))
-        self._subtitle_lbl = tk.Label(h, text="Hard Rock Cafe Warsaw",
+        self._subtitle_lbl = tk.Label(h, text="System kontroli piwa",
                  font=("Segoe UI",10), fg=C("MUTED"), bg=C("SURFACE"))
         self._subtitle_lbl.pack(side="left")
 
@@ -1144,6 +1144,24 @@ class App(tk.Tk):
                 diff = 0.0
             s = db.diff_status(diff); dcol, dbg = diff_colors(s)
             ow = keg.get("open_end") or []
+
+            # Match saved POS quantities to CURRENT size columns by
+            # liters value (not by position), so old entries saved
+            # before a size was inserted/reordered still line up
+            # under the correct header.
+            saved_sizes = pe.get("sizes", [])
+            qty_by_liters = {}
+            for sz in saved_sizes:
+                try:
+                    lit_key = round(float(sz.get("liters", 0)), 3)
+                except (ValueError, TypeError):
+                    continue
+                qty_by_liters[lit_key] = sz.get("qty", 0) or 0
+            pos_qtys = []
+            for cur_sz in sizes:
+                lit_key = round(float(cur_sz.get("liters", 0)), 3)
+                pos_qtys.append(str(qty_by_liters.get(lit_key, 0)))
+
             row_vals = ([keg["name"],
                          f"{db.keg_start_liters(keg):.1f}",
                          str(keg.get("delivery",0)),
@@ -1152,8 +1170,7 @@ class App(tk.Tk):
                          str(ow[1] if len(ow)>1 and ow[1] else "—"),
                          str(ow[2] if len(ow)>2 and ow[2] else "—"),
                          f"{db.keg_end_liters(keg):.2f}"] +
-                        [str(sz.get("qty",0) or 0)
-                         for sz in pe.get("sizes",[])] +
+                        pos_qtys +
                         [str(co.get("spill",0) or 0),
                          str(co.get("void_",0) or 0),
                          str(co.get("open_bar",0) or 0),
@@ -1550,6 +1567,10 @@ class App(tk.Tk):
                      font=("Segoe UI",10),
                      fg=C("TEXT"), bg=C("SURFACE"),
                      anchor="w").pack(side="left")
+
+        tk.Label(body, text="Powered by HTS",
+                 font=("Segoe UI",9,"italic"),
+                 fg=C("GOLD"), bg=C("SURFACE")).pack(anchor="w", pady=(12,0))
 
         tk.Frame(win, bg=C("BORDER"), height=1).pack(fill="x")
         btn_f = tk.Frame(win, bg=C("SURFACE"))
