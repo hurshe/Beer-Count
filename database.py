@@ -5,6 +5,37 @@ import sqlite3, json, os
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "beer_count.db")
 
+
+def safe_float(value, default=0.0):
+    """Parse a number that may use either '.' or ',' as the decimal
+    separator. Polish keyboards and habits commonly produce values
+    like '33,5' for what should be 33.5 — Python's float() rejects
+    that outright and crashes the whole calculation. This accepts
+    both, and falls back to `default` for anything else unparseable
+    (empty string, None, garbage text) instead of raising."""
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip()
+    if not s:
+        return default
+    # Normalize a comma decimal separator to a dot. This assumes the
+    # comma is a decimal point, not a thousands separator — correct
+    # for how these fields are actually used (small liter/kg values).
+    s = s.replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return default
+
+
+def safe_int(value, default=0):
+    """Same idea as safe_float, but for whole-count fields (number of
+    full kegs, number of delivered kegs) where a stray comma/decimal
+    shouldn't crash things either — it's rounded to the nearest int."""
+    return int(round(safe_float(value, default)))
+
 DEFAULT_BEERS = [
     {"name": "ŻYWIEC",   "keg": 30},
     {"name": "HEINEKEN", "keg": 30},
@@ -134,10 +165,11 @@ def delete_day(entry_date: str):
 
 # ── Calc helpers ──────────────────────────────────
 def keg_end_liters(keg_data: dict) -> float:
-    tara = TARA.get(int(keg_data.get("keg", 20)), 7)
-    full = int(keg_data.get("full_end", 0) or 0) * int(keg_data.get("keg", 20))
+    keg_size = safe_int(keg_data.get("keg", 20), 20)
+    tara = TARA.get(keg_size, 7)
+    full = safe_int(keg_data.get("full_end", 0)) * keg_size
     open_l = sum(
-        max(float(w) - tara, 0)
+        max(safe_float(w) - tara, 0)
         for w in (keg_data.get("open_end") or [])
         if w not in (None, "", 0, "0")
     )
@@ -145,21 +177,22 @@ def keg_end_liters(keg_data: dict) -> float:
 
 def keg_start_liters(keg_data: dict) -> float:
     """Start comes from prev day end — stored in 'start_l' field."""
-    return float(keg_data.get("start_l", 0) or 0)
+    return safe_float(keg_data.get("start_l", 0))
 
 def keg_delivery_liters(keg_data: dict) -> float:
-    return int(keg_data.get("delivery", 0) or 0) * int(keg_data.get("keg", 20))
+    keg_size = safe_int(keg_data.get("keg", 20), 20)
+    return safe_int(keg_data.get("delivery", 0)) * keg_size
 
 def pos_liters(pos_entry: dict) -> float:
     return sum(
-        float(sz.get("qty", 0) or 0) * float(sz.get("liters", 0))
+        safe_float(sz.get("qty", 0)) * safe_float(sz.get("liters", 0))
         for sz in (pos_entry.get("sizes") or [])
     )
 
 def corr_liters(corr: dict) -> float:
-    return (float(corr.get("spill", 0) or 0) +
-            float(corr.get("void_", 0) or 0) +
-            float(corr.get("open_bar", 0) or 0))
+    return (safe_float(corr.get("spill", 0)) +
+            safe_float(corr.get("void_", 0)) +
+            safe_float(corr.get("open_bar", 0)))
 
 def calc_diff(keg_data, pos_entry, corr_data) -> float:
     """
