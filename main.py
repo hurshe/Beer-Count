@@ -104,6 +104,17 @@ class ScrollFrame(tk.Frame):
 
     def _on_inner(self, e):
         self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+        # If the content got shorter than the current scroll position
+        # (e.g. settings rebuilt with fewer rows after a theme toggle),
+        # the canvas would otherwise stay scrolled past the new content,
+        # showing a blank gap at the top. Snap back to the top whenever
+        # the full content now fits within the visible canvas height.
+        bbox = self._canvas.bbox("all")
+        if bbox:
+            content_h = bbox[3] - bbox[1]
+            visible_h = self._canvas.winfo_height()
+            if content_h <= visible_h:
+                self._canvas.yview_moveto(0)
 
     def _on_canvas(self, e):
         self._canvas.itemconfig(self._win, width=e.width)
@@ -115,6 +126,9 @@ class ScrollFrame(tk.Frame):
         self.configure(bg=bg)
         self._canvas.configure(bg=bg)
         self._inner.configure(bg=bg)
+
+    def scroll_to_top(self):
+        self._canvas.yview_moveto(0)
 
     @property
     def inner(self):
@@ -482,6 +496,11 @@ class App(tk.Tk):
             if k != key:
                 sf.pack_forget()
         self._tabs[key].pack(fill="both", expand=True)
+        # Always start a freshly-shown tab scrolled to the top, so a
+        # previously-scrolled position from a longer version of that
+        # tab's content (e.g. before a theme-toggle rebuild made it
+        # shorter) never leaves a blank gap at the top.
+        self._tabs[key].scroll_to_top()
 
     # ── Card helper ───────────────────────────────
     def _card(self, parent, title, side=None, fill="both",
@@ -584,7 +603,7 @@ class App(tk.Tk):
                 tara = db.TARA.get(rv["beer"]["keg"], 7)
                 full_l = int(rv["full"].get() or 0) * rv["beer"]["keg"]
                 open_l = sum(
-                    max(float(v.get()) - tara, 0)
+                    max(db.safe_float(v.get()) - tara, 0)
                     for v in rv["open"]
                     if self._is_float(v.get()))
                 rv["res"].configure(text=f"{full_l+open_l:.2f} L")
@@ -639,6 +658,15 @@ class App(tk.Tk):
         self.show_tab("entry")
 
     def _is_float(self, s):
+        """Accepts both '.' and ',' as decimal separator, matching
+        db.safe_float's tolerance — so the live wizard preview doesn't
+        silently treat a comma-decimal entry as invalid while the
+        actual save logic would have accepted it just fine."""
+        if s is None:
+            return False
+        s = str(s).strip().replace(",", ".")
+        if not s:
+            return False
         try: float(s); return True
         except: return False
 
@@ -1389,13 +1417,13 @@ class App(tk.Tk):
             qty_by_liters = {}
             for sz in saved_sizes:
                 try:
-                    lit_key = round(float(sz.get("liters", 0)), 3)
+                    lit_key = round(db.safe_float(sz.get("liters", 0)), 3)
                 except (ValueError, TypeError):
                     continue
                 qty_by_liters[lit_key] = sz.get("qty", 0) or 0
             pos_qtys = []
             for cur_sz in sizes:
-                lit_key = round(float(cur_sz.get("liters", 0)), 3)
+                lit_key = round(db.safe_float(cur_sz.get("liters", 0)), 3)
                 pos_qtys.append(str(qty_by_liters.get(lit_key, 0)))
 
             row_vals = ([keg["name"],
@@ -1432,7 +1460,7 @@ class App(tk.Tk):
         for i, rw in enumerate(self._kw):
             if i >= len(data.get("kegs",[])): continue
             keg = data["kegs"][i]
-            rw["_start_l"] = float(keg.get("start_l",0) or 0)
+            rw["_start_l"] = db.safe_float(keg.get("start_l",0))
             rw["start_lbl"].configure(text=f"{rw['_start_l']:.1f}L")
             del_val = keg.get("delivery","")
             rw["delivery"].set("" if not del_val or del_val == "0" else str(del_val))
@@ -1750,8 +1778,7 @@ class App(tk.Tk):
         for lv, lv2, rf in self._size_data:
             if not rf.winfo_exists(): continue
             lbl = lv.get().strip()
-            try: lit = float(lv2.get())
-            except: lit = 0.5
+            lit = db.safe_float(lv2.get(), default=0.5)
             if lbl: sizes.append({"label":lbl,"liters":lit})
         db.save_beers(beers); db.save_sizes(sizes)
         self._info("Zapisano","Ustawienia zapisane ✓")
