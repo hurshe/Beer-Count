@@ -121,7 +121,7 @@ class ScrollFrame(tk.Frame):
         return self._inner
 
 
-def make_entry(parent, var, width=8, bg=None, font=("Consolas", 10)):
+def make_entry(parent, var, width=8, bg=None, font=("Calibri", 10)):
     bg = bg or C("SURFACE")
     e = tk.Entry(parent, textvariable=var, width=width,
                  font=font, bg=bg, fg=C("TEXT"),
@@ -146,6 +146,35 @@ def make_btn(parent, text, cmd, bg=None, fg="white",
 
 
 class App(tk.Tk):
+    def _set_window_icon(self):
+        """Try two independent strategies to set the taskbar/titlebar
+        icon, since Tk's native iconbitmap() can silently fail on some
+        Windows setups depending on exactly how the .ico was produced.
+        PIL's iconphoto path is more forgiving because it decodes the
+        image itself instead of relying on the native ICO loader."""
+        ico_path = resource_path("icon.ico")
+        if not os.path.exists(ico_path):
+            return  # nothing bundled — keep default Tk icon, no error
+
+        # Strategy 1: native .ico via iconbitmap (works most reliably
+        # for the actual window/taskbar icon on Windows)
+        try:
+            self.iconbitmap(ico_path)
+            return
+        except Exception:
+            pass
+
+        # Strategy 2: decode via PIL and set as iconphoto. This covers
+        # cases where the .ico file, while valid, isn't structured the
+        # exact way Tk's native loader expects.
+        try:
+            from PIL import Image, ImageTk
+            img = Image.open(ico_path)
+            self._icon_photo = ImageTk.PhotoImage(img)  # keep a ref!
+            self.iconphoto(True, self._icon_photo)
+        except Exception:
+            pass  # fall back to default Tk icon — cosmetic only
+
     def __init__(self):
         super().__init__()
         global CURRENT_MODE, THEME
@@ -154,12 +183,7 @@ class App(tk.Tk):
         THEME = dict(DARK if CURRENT_MODE == "dark" else LIGHT)
 
         self.title("🍺 Beer Count")
-        try:
-            self.iconbitmap(resource_path("icon.ico"))
-        except Exception:
-            # icon.ico missing or unreadable — fall back to Tk default
-            # rather than crashing the whole app over a cosmetic detail.
-            pass
+        self._set_window_icon()
         self.geometry("1200x780")
         self.minsize(900, 600)
         self.configure(bg=C("BG"))
@@ -215,6 +239,28 @@ class App(tk.Tk):
                  font=("Segoe UI",10), fg=C("MUTED"), bg=C("GOLD_BG"),
                  padx=10, pady=3, relief="flat")
         self._date_lbl.pack(side="right", padx=16, pady=12)
+
+    def _draw_keg_icon(self, cv):
+        """Draw a simple beer keg silhouette on the given Canvas — used
+        in the About dialog so it matches the app's own branding
+        instead of falling back to a generic emoji mug glyph."""
+        cv.delete("all")
+        w, h = 48, 48
+        body_x0, body_y0 = 10, 8
+        body_x1, body_y1 = 38, 42
+        # Keg body
+        cv.create_rectangle(body_x0, body_y0, body_x1, body_y1,
+                             fill=C("GOLD"), outline=C("GOLD_LT"), width=1)
+        # Top cap
+        cv.create_rectangle(body_x0+8, body_y0-4, body_x1-8, body_y0,
+                             fill=C("GOLD_LT"), outline="")
+        # Horizontal ribs (the metal bands on a real keg)
+        for ry in (16, 24, 32):
+            cv.create_line(body_x0, ry, body_x1, ry,
+                            fill=C("GOLD_BG"), width=2)
+        # Side handle cutout
+        cv.create_oval(body_x0-3, 18, body_x0+3, 26,
+                        fill=C("GOLD_BG"), outline="")
 
     def _draw_theme_icon(self):
         """Draw a simple sun (light mode active -> click for dark) or
@@ -493,7 +539,7 @@ class App(tk.Tk):
                  fg=C("MUTED"), bg=C("SURFACE")).pack(side="left", padx=(0,6))
         self._wiz_date = tk.StringVar(value=str(date.today()))
         tk.Entry(dfr, textvariable=self._wiz_date, width=14,
-                 font=("Consolas",11), relief="solid", bd=1,
+                 font=("Calibri",11), relief="solid", bd=1,
                  bg=C("SURFACE"), fg=C("TEXT"),
                  insertbackground=C("TEXT")).pack(side="left")
         tk.Label(dfr,
@@ -529,7 +575,7 @@ class App(tk.Tk):
                 ov = tk.StringVar()
                 make_entry(rf, ov, width=10).pack(side="left", padx=4)
                 rv["open"].append(ov)
-            res = tk.Label(rf, text="0.00 L", font=("Consolas",10),
+            res = tk.Label(rf, text="0.00 L", font=("Calibri",10),
                            fg=C("GOLD"), bg=C("SURFACE"), width=10, anchor="center")
             res.pack(side="left", padx=4)
             rv["res"] = res
@@ -632,16 +678,29 @@ class App(tk.Tk):
                  fg=C("MUTED"), bg=C("BG")).pack(side="left", padx=(0,6))
         self.ev_date = tk.StringVar(value=str(date.today()))
         tk.Entry(dfr, textvariable=self.ev_date, width=14,
-                 font=("Consolas",11), relief="solid", bd=1,
+                 font=("Calibri",11), relief="solid", bd=1,
                  bg=C("SURFACE"), fg=C("TEXT"),
                  insertbackground=C("TEXT")).pack(side="left")
-        for lbl, d in [("← Wczoraj",-1),("Dzisiaj →",0)]:
-            make_btn(dfr, lbl,
-                     lambda d=d: self.ev_date.set(
-                         str(date.today()+timedelta(days=d))),
-                     bg=C("GOLD_BG"), fg=C("GOLD"),
-                     font=("Segoe UI",9), padx=8, pady=4).pack(
-                side="left", padx=5)
+
+        # These shift the CURRENTLY ENTERED date by one day each click,
+        # so the user can keep paging forward/backward through many
+        # days in a row — not just jump to "today ± 1" every time.
+        make_btn(dfr, "◀ Poprzedni dzień",
+                 lambda: self._shift_date(-1),
+                 bg=C("GOLD_BG"), fg=C("GOLD"),
+                 font=("Segoe UI",9), padx=8, pady=4).pack(
+            side="left", padx=(5,0))
+        make_btn(dfr, "Dziś",
+                 lambda: self.ev_date.set(str(date.today())),
+                 bg=C("GOLD_BG"), fg=C("GOLD"),
+                 font=("Segoe UI",9), padx=8, pady=4).pack(
+            side="left", padx=5)
+        make_btn(dfr, "Następny dzień ▶",
+                 lambda: self._shift_date(1),
+                 bg=C("GOLD_BG"), fg=C("GOLD"),
+                 font=("Segoe UI",9), padx=8, pady=4).pack(
+            side="left", padx=(0,5))
+
         self.ev_date.trace_add("write", lambda *_: self._load_prev_starts())
         make_btn(dfr, "📂 Importuj POS (xlsx)",
                  self._import_pos_xlsx,
@@ -752,7 +811,7 @@ class App(tk.Tk):
                      bg=C("SURFACE"), anchor="w").grid(
                 row=ri, column=0, sticky="ew", padx=2, pady=2)
             rv["start_lbl"] = tk.Label(f, text="—",
-                                        font=("Consolas",9), fg=C("GOLD"),
+                                        font=("Calibri",9), fg=C("GOLD"),
                                         bg=C("PREV_BG"), anchor="center")
             rv["start_lbl"].grid(row=ri, column=1, sticky="ew", padx=2, pady=2)
 
@@ -778,7 +837,7 @@ class App(tk.Tk):
                 rv["open_end"].append(ov)
 
             rv["end_lbl"] = tk.Label(f, text="—",
-                                      font=("Consolas",9,"bold"),
+                                      font=("Calibri",9,"bold"),
                                       fg=C("GOLD"), bg=C("SURFACE"), anchor="center")
             rv["end_lbl"].grid(row=ri, column=7, sticky="ew", padx=2, pady=2)
             self._kw.append(rv)
@@ -811,7 +870,7 @@ class App(tk.Tk):
                 e.bind("<KeyRelease>", lambda _: self._recalc())
                 self._all_entries.append(e)
                 svars.append({"var": sv, "liters": sz["liters"], "label": sz["label"]})
-            lbl = tk.Label(f, text="0.00L", font=("Consolas",9,"bold"),
+            lbl = tk.Label(f, text="0.00L", font=("Calibri",9,"bold"),
                            fg=C("GOLD"), bg=C("SURFACE"), anchor="center")
             lbl.grid(row=ri, column=len(sizes)+1, sticky="ew", padx=2, pady=2)
             self._pw.append({"name": beer["name"], "sizes": svars, "lbl": lbl})
@@ -838,11 +897,25 @@ class App(tk.Tk):
                 e.bind("<KeyRelease>", lambda _: self._recalc())
                 self._all_entries.append(e)
                 cv[field] = v
-            lbl = tk.Label(f, text="−0.00", font=("Consolas",9,"bold"),
+            lbl = tk.Label(f, text="−0.00", font=("Calibri",9,"bold"),
                            fg=C("RED"), bg=C("SURFACE"), anchor="center")
             lbl.grid(row=ri, column=4, sticky="ew", padx=2, pady=2)
             cv["lbl"] = lbl
             self._cw.append(cv)
+
+    def _shift_date(self, days):
+        """Move the currently entered date by `days` (can be called
+        repeatedly to page through many days forward or backward,
+        unlike a fixed 'yesterday/today' jump anchored to the real
+        current date)."""
+        current = self.ev_date.get().strip()
+        try:
+            base = datetime.strptime(current, "%Y-%m-%d").date()
+        except ValueError:
+            # Invalid/empty field — fall back to today so the button
+            # still does something sensible instead of erroring out.
+            base = date.today()
+        self.ev_date.set(str(base + timedelta(days=days)))
 
     def _load_prev_starts(self, *_):
         d = self.ev_date.get().strip()
@@ -1241,7 +1314,7 @@ class App(tk.Tk):
                      fg=C("TEXT"), bg=C("SURFACE"), width=10,
                      anchor="w").pack(side="left")
             tk.Label(br, text=f"{DIFF_ICONS[s]} {diff:+.2f}L",
-                     font=("Consolas",9,"bold"), fg=c,
+                     font=("Calibri",9,"bold"), fg=c,
                      bg=C("SURFACE"), width=12,
                      anchor="e").pack(side="right")
 
@@ -1525,7 +1598,7 @@ class App(tk.Tk):
                      font=("Segoe UI",9), fg=C("MUTED"), bg=C("BG"),
                      width=14, anchor="w").pack(side="left")
             tk.Label(tr, text=f"{DIFF_ICONS[s]} {d_diff:+.2f}L",
-                     font=("Consolas",9,"bold"), fg=col,
+                     font=("Calibri",9,"bold"), fg=col,
                      bg=C("BG"), width=12, anchor="e").pack(side="right")
 
     def _export_month(self):
@@ -1640,10 +1713,10 @@ class App(tk.Tk):
         rf.pack(fill="x", pady=2)
         lv  = tk.StringVar(value=label)
         lv2 = tk.StringVar(value=liters)
-        tk.Entry(rf, textvariable=lv, width=8, font=("Consolas",10),
+        tk.Entry(rf, textvariable=lv, width=8, font=("Calibri",10),
                  relief="solid", bd=1, bg=C("SURFACE"), fg=C("TEXT"),
                  insertbackground=C("TEXT")).pack(side="left", padx=(0,6))
-        tk.Entry(rf, textvariable=lv2, width=8, font=("Consolas",10),
+        tk.Entry(rf, textvariable=lv2, width=8, font=("Calibri",10),
                  relief="solid", bd=1, bg=C("SURFACE"), fg=C("TEXT"),
                  insertbackground=C("TEXT")).pack(side="left", padx=(0,4))
         tk.Label(rf, text="L/szt.", font=("Segoe UI",9),
@@ -1782,8 +1855,14 @@ class App(tk.Tk):
 
         top = tk.Frame(win, bg=C("GOLD_BG"), height=80)
         top.pack(fill="x"); top.pack_propagate(False)
-        tk.Label(top, text="🍺", font=("Segoe UI",36),
-                 bg=C("GOLD_BG")).pack(side="left", padx=20)
+
+        # Canvas-drawn keg icon instead of an emoji glyph — consistent
+        # with the app's own icon and avoids emoji-rendering issues.
+        icon_cv = tk.Canvas(top, width=48, height=48, bg=C("GOLD_BG"),
+                             highlightthickness=0)
+        icon_cv.pack(side="left", padx=20)
+        self._draw_keg_icon(icon_cv)
+
         title_f = tk.Frame(top, bg=C("GOLD_BG"))
         title_f.pack(side="left", pady=14)
         tk.Label(title_f, text="Beer Count",
@@ -1797,32 +1876,32 @@ class App(tk.Tk):
         body = tk.Frame(win, bg=C("SURFACE"))
         body.pack(fill="both", expand=True, padx=30, pady=20)
 
+        # Grid layout guarantees the label column and value column line
+        # up cleanly regardless of text length, unlike pack() where an
+        # empty label row could end up narrower than "Wersja:" etc.
         info = [
-            ("Wersja",    "1.0.0  (2026)"),
-            ("Autor",     "Robert Khurshudian"),
-            ("",          ""),
-            ("Prawa",     "© 2026 Robert Khurshudian"),
-            ("",          "Wszelkie prawa zastrzeżone."),
+            ("Wersja:", "1.0.0  (2026)"),
+            ("Autor:",  "Robert Khurshudian"),
+            ("",        ""),
+            ("Prawa:",  "© 2026 Robert Khurshudian"),
+            ("",        "Wszelkie prawa zastrzeżone."),
         ]
-        for label, value in info:
-            row = tk.Frame(body, bg=C("SURFACE"))
-            row.pack(fill="x", pady=2)
-            if label:
-                tk.Label(row, text=f"{label}:",
-                         font=("Segoe UI",10,"bold"),
-                         fg=C("GOLD"), bg=C("SURFACE"),
-                         width=10, anchor="w").pack(side="left")
-            else:
-                tk.Label(row, text="",
-                         width=10, bg=C("SURFACE")).pack(side="left")
-            tk.Label(row, text=value,
+        for r, (label, value) in enumerate(info):
+            tk.Label(body, text=label,
+                     font=("Segoe UI",10,"bold"),
+                     fg=C("GOLD"), bg=C("SURFACE"),
+                     anchor="w").grid(row=r, column=0, sticky="nw", pady=2)
+            tk.Label(body, text=value,
                      font=("Segoe UI",10),
                      fg=C("TEXT"), bg=C("SURFACE"),
-                     anchor="w").pack(side="left")
+                     anchor="w").grid(row=r, column=1, sticky="nw",
+                                       padx=(10,0), pady=2)
+        body.grid_columnconfigure(1, weight=1)
 
         tk.Label(body, text="Powered by HTS",
                  font=("Segoe UI",9,"italic"),
-                 fg=C("GOLD"), bg=C("SURFACE")).pack(anchor="w", pady=(12,0))
+                 fg=C("GOLD"), bg=C("SURFACE")).grid(
+            row=len(info), column=0, columnspan=2, sticky="w", pady=(12,0))
 
         tk.Frame(win, bg=C("BORDER"), height=1).pack(fill="x")
         btn_f = tk.Frame(win, bg=C("SURFACE"))
