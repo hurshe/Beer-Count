@@ -159,6 +159,7 @@ class App(tk.Tk):
         self._build_history()
         self._build_report()
         self._build_settings()
+        self._build_loading_overlay()
         if not db.get_months() and not db.load_day(str(date.today())):
             self._build_wizard()
             self._show("wizard")
@@ -202,6 +203,9 @@ class App(tk.Tk):
         self._apply_theme_everywhere()
 
     def _apply_theme_everywhere(self):
+        self._start_loading_overlay()
+        self.update_idletasks()
+
         self.configure(bg=C("BG"))
 
         self._header_frame.configure(bg=C("SURFACE"))
@@ -226,6 +230,10 @@ class App(tk.Tk):
         for sf in self._themed_scrollframes:
             sf.recolor(C("BG"))
 
+        self._overlay.configure(bg=C("BG"))
+        self._overlay_canvas.configure(bg=C("BG"))
+        self._overlay_label.configure(fg=C("MUTED"), bg=C("BG"))
+
         self._build_entry_inner_only()
         self._build_history()
         self._build_report()
@@ -233,6 +241,8 @@ class App(tk.Tk):
         loader = getattr(self, f"_load_{current}", None)
         if loader: loader()
         self._show(current)
+        self.update_idletasks()
+        self.after(180, self._stop_loading_overlay)
 
     def _build_entry_inner_only(self):
         f = self._tab_frames["entry"]
@@ -258,6 +268,86 @@ class App(tk.Tk):
             b.pack(side="left")
             self._nav_btns[key] = b
 
+    def _build_loading_overlay(self):
+        """A small animated 'pouring beer' overlay shown briefly while
+        a tab's content is being constructed, so the user sees a nice
+        animation instead of a half-built blank frame for a split
+        second on slower machines (e.g. Windows 7)."""
+        self._overlay = tk.Frame(self, bg=C("BG"))
+        self._overlay_canvas = tk.Canvas(
+            self._overlay, width=220, height=220,
+            bg=C("BG"), highlightthickness=0)
+        self._overlay_canvas.pack(expand=True)
+        self._overlay_label = tk.Label(
+            self._overlay, text="Ładowanie…",
+            font=("Segoe UI", 11), fg=C("MUTED"), bg=C("BG"))
+        self._overlay_label.pack(pady=(0, 30))
+        self._overlay_job = None
+        self._overlay_frame_n = 0
+
+    def _draw_pour_frame(self, n):
+        """Draw one frame of a simple glass-filling-with-foam animation
+        using basic Canvas primitives (no external image assets needed,
+        so it works identically in the frozen .exe)."""
+        cv = self._overlay_canvas
+        cv.delete("all")
+        cv.configure(bg=C("BG"))
+
+        glass_x0, glass_y0 = 70, 40
+        glass_x1, glass_y1 = 150, 170
+        # Glass outline (slightly trapezoidal for a pint-glass look)
+        cv.create_polygon(
+            glass_x0+6, glass_y0, glass_x1-6, glass_y0,
+            glass_x1, glass_y1, glass_x0, glass_y1,
+            outline=C("BORDER"), width=2, fill="")
+
+        # Fill level animates 0 -> ~80% over the cycle, then resets
+        total_frames = 18
+        progress = (n % total_frames) / total_frames
+        fill_h = int((glass_y1 - glass_y0 - 10) * min(progress * 1.3, 1.0))
+        fill_top = glass_y1 - fill_h
+
+        if fill_h > 4:
+            cv.create_rectangle(
+                glass_x0+3, fill_top, glass_x1-3, glass_y1-2,
+                fill=C("GOLD_LT"), outline="")
+            # Foam on top — a few overlapping ovals that "bubble"
+            foam_h = 10 if progress < 0.9 else max(0, 16 - int(progress*16))
+            if foam_h > 0:
+                import random
+                rnd = random.Random(n)  # deterministic per-frame wobble
+                for i in range(5):
+                    ox = glass_x0 + 8 + i * 16 + rnd.randint(-2, 2)
+                    oy = fill_top - 4 + rnd.randint(-2, 2)
+                    cv.create_oval(
+                        ox-9, oy-7, ox+9, oy+7,
+                        fill="#ffffff", outline="")
+
+        # Little droplet animation falling into the glass while pouring
+        if progress < 0.85:
+            drop_y = glass_y0 - 25 + int(((n % 6) / 6) * 25)
+            cv.create_oval(106, drop_y, 114, drop_y+10,
+                            fill=C("GOLD_LT"), outline="")
+
+        cv.create_text(110, 195, text="🍺", font=("Segoe UI", 18))
+
+    def _start_loading_overlay(self):
+        self._overlay.place(x=0, y=0, relwidth=1, relheight=1)
+        self._overlay.lift()
+        self._overlay_frame_n = 0
+        self._animate_overlay()
+
+    def _animate_overlay(self):
+        self._draw_pour_frame(self._overlay_frame_n)
+        self._overlay_frame_n += 1
+        self._overlay_job = self.after(45, self._animate_overlay)
+
+    def _stop_loading_overlay(self):
+        if self._overlay_job:
+            self.after_cancel(self._overlay_job)
+            self._overlay_job = None
+        self._overlay.place_forget()
+
     def show_tab(self, key):
         self._current_tab = key
         for k, b in self._nav_btns.items():
@@ -267,13 +357,17 @@ class App(tk.Tk):
             else:
                 b.configure(bg=C("SURFACE"), fg=C("MUTED"),
                             font=("Segoe UI",10))
-        # Build content WHILE the frame is still hidden (unpacked),
-        # then pack it only once everything exists. This avoids the
-        # visible "unrolling" effect where rows appear one by one
-        # as Tk paints each newly created widget on screen.
+        # Show the pour animation immediately, build content underneath
+        # while it plays, then swap to the finished tab. The animation
+        # masks any partial-layout flicker on slower machines and
+        # looks intentional rather than like a glitch.
+        self._start_loading_overlay()
+        self.update_idletasks()
         loader = getattr(self, f"_load_{key}", None)
         if loader: loader()
         self._show(key)
+        self.update_idletasks()
+        self.after(180, self._stop_loading_overlay)
 
     def _show(self, key):
         for k, sf in self._tabs.items():
