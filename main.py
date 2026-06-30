@@ -230,9 +230,9 @@ class App(tk.Tk):
         self._build_history()
         self._build_report()
         self._build_settings()
-        self._show(current)
         loader = getattr(self, f"_load_{current}", None)
         if loader: loader()
+        self._show(current)
 
     def _build_entry_inner_only(self):
         f = self._tab_frames["entry"]
@@ -267,13 +267,18 @@ class App(tk.Tk):
             else:
                 b.configure(bg=C("SURFACE"), fg=C("MUTED"),
                             font=("Segoe UI",10))
-        self._show(key)
+        # Build content WHILE the frame is still hidden (unpacked),
+        # then pack it only once everything exists. This avoids the
+        # visible "unrolling" effect where rows appear one by one
+        # as Tk paints each newly created widget on screen.
         loader = getattr(self, f"_load_{key}", None)
         if loader: loader()
+        self._show(key)
 
     def _show(self, key):
-        for sf in self._tabs.values():
-            sf.pack_forget()
+        for k, sf in self._tabs.items():
+            if k != key:
+                sf.pack_forget()
         self._tabs[key].pack(fill="both", expand=True)
 
     # ── Card helper ───────────────────────────────
