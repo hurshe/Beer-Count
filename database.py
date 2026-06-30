@@ -15,13 +15,12 @@ DEFAULT_BEERS = [
 ]
 DEFAULT_SIZES = [
     {"label": "0.3L", "liters": 0.3},
+    {"label": "0.4L", "liters": 0.4},
     {"label": "0.5L", "liters": 0.5},
     {"label": "1.5L", "liters": 1.5},
 ]
 TARA = {20: 7, 30: 11, 50: 15}
 
-# Single persistent connection — opened once, reused for all calls.
-# SQLite is single-threaded in tkinter apps, so this is safe.
 _conn = None
 
 
@@ -48,6 +47,9 @@ def init_db():
         conn.execute("INSERT INTO settings VALUES ('beers',?)", (json.dumps(DEFAULT_BEERS),))
     if not conn.execute("SELECT 1 FROM settings WHERE key='sizes'").fetchone():
         conn.execute("INSERT INTO settings VALUES ('sizes',?)", (json.dumps(DEFAULT_SIZES),))
+    # Theme setting
+    if not conn.execute("SELECT 1 FROM settings WHERE key='theme'").fetchone():
+        conn.execute("INSERT INTO settings VALUES ('theme',?)", (json.dumps("light"),))
     conn.commit()
 
 
@@ -68,6 +70,15 @@ def get_sizes():
 def save_sizes(sizes):
     conn = get_conn()
     conn.execute("INSERT OR REPLACE INTO settings VALUES ('sizes',?)", (json.dumps(sizes),))
+    conn.commit()
+
+def get_theme():
+    row = get_conn().execute("SELECT value FROM settings WHERE key='theme'").fetchone()
+    return json.loads(row["value"]) if row else "light"
+
+def save_theme(theme):
+    conn = get_conn()
+    conn.execute("INSERT OR REPLACE INTO settings VALUES ('theme',?)", (json.dumps(theme),))
     conn.commit()
 
 
@@ -153,8 +164,26 @@ def corr_liters(corr: dict) -> float:
 def calc_diff(keg_data, pos_entry, corr_data) -> float:
     """
     Różnica = END_faktyczny − (START + dostawa − POS − korekty)
-    + = zostało więcej niż powinno (niedolewanie / sprzedaż poza POS)
-    - = zostało mniej niż powinno (spille / straty)
+
+    Logika:
+      Teoretyczny_END = ile piwa POWINNO zostać po sprzedaży
+                       = START + Dostawa − Sprzedaż_POS − Korekty
+
+      Faktyczny_END   = ile piwa REALNIE zostało (ważenie/liczenie)
+
+      Różnica = Faktyczny_END − Teoretyczny_END
+
+    + (dodatnia) = zostało WIĘCEJ niż powinno
+                 = niedolewanie porcji / sprzedaż poza systemem POS
+    − (ujemna)   = zostało MNIEJ niż powinno
+                 = spille, przelewy, straty, kradzież
+
+    WAŻNE: jeśli START = 0 (brak danych z poprzedniego dnia, np.
+    pierwszy dzień użytkowania aplikacji bez Kreatora), wynik
+    Różnicy NIE jest miarodajny — będzie sztucznie bardzo ujemny,
+    bo aplikacja nie wie ile piwa było w beczce na początku dnia.
+    W takim wypadku najpierw uzupełnij stan początkowy w Kreatorze
+    pierwszego uruchomienia (zakładka Ustawienia).
     """
     end_fact        = keg_end_liters(keg_data)
     start           = keg_start_liters(keg_data)
@@ -170,3 +199,7 @@ def diff_status(diff: float) -> str:
     if 2  < diff <= 5:  return "warn"
     if diff > 5:        return "over"
     return "bad"
+
+def has_valid_start(keg_data: dict) -> bool:
+    """True if this keg has a real START value (not zero/missing)."""
+    return keg_start_liters(keg_data) > 0
