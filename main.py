@@ -803,26 +803,85 @@ class App(tk.Tk):
         beers = db.get_beers()
         sizes = db.get_sizes()
         self._all_entries = []
+        self._entry_coords = {}   # widget -> (section, row, col)
+        self._entry_grid = {}     # (section, row, col) -> widget
         self._build_keg_inputs(beers)
         self._build_pos_inputs(beers, sizes)
         self._build_corr_inputs(beers)
         self._init_summary_rows(beers)
-        self._bind_enter_navigation()
+        self._bind_grid_navigation()
         self._load_prev_starts()
         self._recalc()
 
-    def _bind_enter_navigation(self):
-        entries = self._all_entries
-        for i, e in enumerate(entries):
-            next_e = entries[i+1] if i+1 < len(entries) else entries[0]
-            e.bind("<Return>", lambda ev, n=next_e: n.focus_set())
-            e.bind("<KP_Enter>", lambda ev, n=next_e: n.focus_set())
+    def _register_entry(self, widget, section, row, col):
+        """Record an entry field's position in its table so arrow-key
+        navigation can find what's above/below/left/right of it."""
+        self._entry_coords[widget] = (section, row, col)
+        self._entry_grid[(section, row, col)] = widget
+        self._all_entries.append(widget)
+
+    # Defines which section sits to the left/right of which, so arrow
+    # navigation can hop from the last column of one table into the
+    # first column of the next one when the user is already at the
+    # edge — e.g. pressing → at the end of a "Stan kegów" row jumps
+    # into the matching row of "Sprzedaż POS".
+    _SECTION_ORDER = ["kegs", "pos", "corr"]
+
+    def _bind_grid_navigation(self):
+        """Bind arrow keys (Up/Down/Left/Right, Excel-style), Enter
+        (move down — most natural for entering a column of numbers
+        top-to-bottom) and Shift+Enter (move up) to every registered
+        entry field."""
+        for widget, (section, row, col) in self._entry_coords.items():
+            widget.bind("<Up>",    lambda e, s=section, r=row, c=col: self._nav_move(s, r, c, 0, -1))
+            widget.bind("<Down>",  lambda e, s=section, r=row, c=col: self._nav_move(s, r, c, 0, 1))
+            widget.bind("<Left>",  lambda e, s=section, r=row, c=col: self._nav_move(s, r, c, -1, 0))
+            widget.bind("<Right>", lambda e, s=section, r=row, c=col: self._nav_move(s, r, c, 1, 0))
+            widget.bind("<Return>",   lambda e, s=section, r=row, c=col: self._nav_move(s, r, c, 0, 1))
+            widget.bind("<KP_Enter>", lambda e, s=section, r=row, c=col: self._nav_move(s, r, c, 0, 1))
+            widget.bind("<Shift-Return>", lambda e, s=section, r=row, c=col: self._nav_move(s, r, c, 0, -1))
+
+    def _nav_move(self, section, row, col, dcol, drow):
+        """Move focus from (section,row,col) by (dcol,drow). If that
+        lands outside the current table's columns, hop into the
+        neighboring table on the same row when one exists in that
+        direction — so → at the last column of Stan kegów continues
+        into Sprzedaż POS, and ← at the first column goes back."""
+        target = self._entry_grid.get((section, row + drow, col + dcol))
+        if target:
+            target.focus_set()
+            target.icursor("end")
+            return "break"
+
+        # Try hopping sideways into the neighboring section when we've
+        # walked off the left/right edge of the current one (only for
+        # horizontal moves — vertical Up/Down stays within its table,
+        # since the three tables don't have the same row meaning once
+        # you're moving within a single column).
+        if dcol != 0:
+            try:
+                idx = self._SECTION_ORDER.index(section)
+            except ValueError:
+                return "break"
+            next_idx = idx + (1 if dcol > 0 else -1)
+            if 0 <= next_idx < len(self._SECTION_ORDER):
+                other = self._SECTION_ORDER[next_idx]
+                # Enter the neighbor at its first column if moving
+                # right, or its last column if moving left.
+                cols_in_other = [c for (s, r, c) in self._entry_grid
+                                  if s == other and r == row]
+                if cols_in_other:
+                    entry_col = min(cols_in_other) if dcol > 0 else max(cols_in_other)
+                    other_widget = self._entry_grid.get((other, row, entry_col))
+                    if other_widget:
+                        other_widget.focus_set()
+                        other_widget.icursor("end")
+        return "break"
 
     def _build_keg_inputs(self, beers):
         f = self._kegs_frame
         for w in f.winfo_children(): w.destroy()
         self._kw = []
-        self._all_entries = []
 
         hdrs = ["Piwo","START","DOSTAWA","PEŁNE","kg#1","kg#2","kg#3","END(L)"]
         for ci, h in enumerate(hdrs):
@@ -847,13 +906,13 @@ class App(tk.Tk):
             e_del = make_entry(f, rv["delivery"], bg=C("DELIVERY_BG"))
             e_del.grid(row=ri, column=2, sticky="ew", padx=2, pady=2)
             e_del.bind("<KeyRelease>", lambda _: self._recalc())
-            self._all_entries.append(e_del)
+            self._register_entry(e_del, "kegs", ri, 2)
 
             rv["full_end"] = tk.StringVar()
             e_full = make_entry(f, rv["full_end"])
             e_full.grid(row=ri, column=3, sticky="ew", padx=2, pady=2)
             e_full.bind("<KeyRelease>", lambda _: self._recalc())
-            self._all_entries.append(e_full)
+            self._register_entry(e_full, "kegs", ri, 3)
 
             rv["open_end"] = []
             for j in range(3):
@@ -861,7 +920,7 @@ class App(tk.Tk):
                 oe = make_entry(f, ov)
                 oe.grid(row=ri, column=4+j, sticky="ew", padx=2, pady=2)
                 oe.bind("<KeyRelease>", lambda _: self._recalc())
-                self._all_entries.append(oe)
+                self._register_entry(oe, "kegs", ri, 4+j)
                 rv["open_end"].append(ov)
 
             rv["end_lbl"] = tk.Label(f, text="—",
@@ -896,7 +955,7 @@ class App(tk.Tk):
                 e = make_entry(f, sv)
                 e.grid(row=ri, column=si+1, sticky="ew", padx=2, pady=2)
                 e.bind("<KeyRelease>", lambda _: self._recalc())
-                self._all_entries.append(e)
+                self._register_entry(e, "pos", ri, si+1)
                 svars.append({"var": sv, "liters": sz["liters"], "label": sz["label"]})
             lbl = tk.Label(f, text="0.00L", font=("Calibri",9,"bold"),
                            fg=C("GOLD"), bg=C("SURFACE"), anchor="center")
@@ -923,7 +982,7 @@ class App(tk.Tk):
                 e = make_entry(f, v)
                 e.grid(row=ri, column=ci, sticky="ew", padx=2, pady=2)
                 e.bind("<KeyRelease>", lambda _: self._recalc())
-                self._all_entries.append(e)
+                self._register_entry(e, "corr", ri, ci)
                 cv[field] = v
             lbl = tk.Label(f, text="−0.00", font=("Calibri",9,"bold"),
                            fg=C("RED"), bg=C("SURFACE"), anchor="center")
