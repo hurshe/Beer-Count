@@ -12,6 +12,20 @@ import database as db
 import export_excel as xl
 import pos_import
 from datetime import date, timedelta, datetime
+import os
+import sys
+
+
+def resource_path(filename):
+    """Resolve a path to a bundled resource (e.g. icon.ico) that works
+    both when running main.py directly AND when frozen into a PyInstaller
+    .exe (where bundled data files live under sys._MEIPASS instead of
+    next to the script)."""
+    if hasattr(sys, "_MEIPASS"):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, filename)
 
 # ════════════════════════════════════════════════════
 #  THEMES — calm, low-contrast palettes
@@ -140,6 +154,12 @@ class App(tk.Tk):
         THEME = dict(DARK if CURRENT_MODE == "dark" else LIGHT)
 
         self.title("🍺 Beer Count")
+        try:
+            self.iconbitmap(resource_path("icon.ico"))
+        except Exception:
+            # icon.ico missing or unreadable — fall back to Tk default
+            # rather than crashing the whole app over a cosmetic detail.
+            pass
         self.geometry("1200x780")
         self.minsize(900, 600)
         self.configure(bg=C("BG"))
@@ -180,20 +200,46 @@ class App(tk.Tk):
                  font=("Segoe UI",10), fg=C("MUTED"), bg=C("SURFACE"))
         self._subtitle_lbl.pack(side="left")
 
-        self._theme_btn = tk.Button(
-            h, text=self._theme_icon(), font=("Segoe UI",14),
-            bg=C("SURFACE"), fg=C("TEXT"), relief="flat", bd=0,
-            cursor="hand2", activebackground=C("GOLD_BG"),
-            command=self._toggle_theme)
-        self._theme_btn.pack(side="right", padx=(0,12), pady=8)
+        # Theme toggle drawn on a small Canvas instead of relying on an
+        # emoji glyph (🌙/☀️) — those often render as a tiny garbled box
+        # on older Windows fonts (esp. Windows 7) instead of a proper
+        # icon, since Tk text labels can't do colored emoji rendering.
+        self._theme_canvas = tk.Canvas(
+            h, width=28, height=28, bg=C("SURFACE"),
+            highlightthickness=0, cursor="hand2")
+        self._theme_canvas.pack(side="right", padx=(0,12), pady=8)
+        self._theme_canvas.bind("<Button-1>", lambda e: self._toggle_theme())
+        self._draw_theme_icon()
 
         self._date_lbl = tk.Label(h, text=date.today().strftime("%A, %d.%m.%Y"),
                  font=("Segoe UI",10), fg=C("MUTED"), bg=C("GOLD_BG"),
                  padx=10, pady=3, relief="flat")
         self._date_lbl.pack(side="right", padx=16, pady=12)
 
-    def _theme_icon(self):
-        return "🌙" if CURRENT_MODE == "light" else "☀️"
+    def _draw_theme_icon(self):
+        """Draw a simple sun (light mode active -> click for dark) or
+        moon (dark mode active -> click for light) icon as basic
+        Canvas shapes, so it always looks crisp regardless of font/OS."""
+        cv = self._theme_canvas
+        cv.configure(bg=C("SURFACE"))
+        cv.delete("all")
+        cx, cy = 14, 14
+        if CURRENT_MODE == "light":
+            # Show a moon (what you'll switch TO)
+            cv.create_oval(6, 5, 22, 21, fill=C("MUTED"), outline="")
+            # Carve a crescent by overlaying a surface-colored circle
+            cv.create_oval(10, 3, 26, 19, fill=C("SURFACE"), outline="")
+        else:
+            # Show a sun (what you'll switch TO)
+            cv.create_oval(8, 8, 20, 20, fill=C("GOLD"), outline="")
+            for ang in range(0, 360, 45):
+                import math
+                rad = math.radians(ang)
+                x1 = cx + 9 * math.cos(rad)
+                y1 = cy + 9 * math.sin(rad)
+                x2 = cx + 13 * math.cos(rad)
+                y2 = cy + 13 * math.sin(rad)
+                cv.create_line(x1, y1, x2, y2, fill=C("GOLD"), width=2)
 
     def _toggle_theme(self):
         global CURRENT_MODE, THEME
@@ -212,9 +258,7 @@ class App(tk.Tk):
         self._header_sep.configure(bg=C("GOLD_LT"))
         self._title_lbl.configure(fg=C("GOLD"), bg=C("SURFACE"))
         self._subtitle_lbl.configure(fg=C("MUTED"), bg=C("SURFACE"))
-        self._theme_btn.configure(
-            text=self._theme_icon(), bg=C("SURFACE"), fg=C("TEXT"),
-            activebackground=C("GOLD_BG"))
+        self._draw_theme_icon()
         self._date_lbl.configure(fg=C("MUTED"), bg=C("GOLD_BG"))
 
         self._nav_frame.configure(bg=C("SURFACE"))
@@ -242,7 +286,6 @@ class App(tk.Tk):
         if loader: loader()
         self._show(current)
         self.update_idletasks()
-        self.after(180, self._stop_loading_overlay)
 
     def _build_entry_inner_only(self):
         f = self._tab_frames["entry"]
@@ -285,37 +328,44 @@ class App(tk.Tk):
         self._overlay_job = None
         self._overlay_frame_n = 0
 
+    # Total animation length: TOTAL_FRAMES * _OVERLAY_FRAME_MS ms.
+    # 12 frames * 40ms = 480ms — short enough not to feel like a delay,
+    # long enough to read as an intentional, polished transition.
+    _OVERLAY_TOTAL_FRAMES = 12
+    _OVERLAY_FRAME_MS = 40
+
     def _draw_pour_frame(self, n):
-        """Draw one frame of a simple glass-filling-with-foam animation
-        using basic Canvas primitives (no external image assets needed,
-        so it works identically in the frozen .exe)."""
+        """Draw one frame of a single-pass glass-filling-with-foam
+        animation using basic Canvas primitives (no external image
+        assets needed, so it works identically in the frozen .exe).
+        Returns True once this was the final frame of the cycle."""
         cv = self._overlay_canvas
         cv.delete("all")
         cv.configure(bg=C("BG"))
 
         glass_x0, glass_y0 = 70, 40
         glass_x1, glass_y1 = 150, 170
-        # Glass outline (slightly trapezoidal for a pint-glass look)
         cv.create_polygon(
             glass_x0+6, glass_y0, glass_x1-6, glass_y0,
             glass_x1, glass_y1, glass_x0, glass_y1,
             outline=C("BORDER"), width=2, fill="")
 
-        # Fill level animates 0 -> ~80% over the cycle, then resets
-        total_frames = 18
-        progress = (n % total_frames) / total_frames
-        fill_h = int((glass_y1 - glass_y0 - 10) * min(progress * 1.3, 1.0))
+        total = self._OVERLAY_TOTAL_FRAMES
+        n = min(n, total - 1)
+        progress = n / (total - 1)  # 0.0 -> 1.0, single pass, no wraparound
+        fill_h = int((glass_y1 - glass_y0 - 10) * min(progress * 1.15, 1.0))
         fill_top = glass_y1 - fill_h
 
         if fill_h > 4:
             cv.create_rectangle(
                 glass_x0+3, fill_top, glass_x1-3, glass_y1-2,
                 fill=C("GOLD_LT"), outline="")
-            # Foam on top — a few overlapping ovals that "bubble"
-            foam_h = 10 if progress < 0.9 else max(0, 16 - int(progress*16))
+            # Foam appears while pouring, settles to a thin head by the
+            # final frame — mirrors a real pour finishing cleanly.
+            foam_h = 10 if progress < 0.75 else max(3, int(10 * (1 - progress)) + 3)
             if foam_h > 0:
                 import random
-                rnd = random.Random(n)  # deterministic per-frame wobble
+                rnd = random.Random(n)
                 for i in range(5):
                     ox = glass_x0 + 8 + i * 16 + rnd.randint(-2, 2)
                     oy = fill_top - 4 + rnd.randint(-2, 2)
@@ -323,26 +373,40 @@ class App(tk.Tk):
                         ox-9, oy-7, ox+9, oy+7,
                         fill="#ffffff", outline="")
 
-        # Little droplet animation falling into the glass while pouring
-        if progress < 0.85:
-            drop_y = glass_y0 - 25 + int(((n % 6) / 6) * 25)
+        # Droplet only while actively pouring, gone before the end
+        if progress < 0.7:
+            drop_y = glass_y0 - 25 + int((n % 4) * 6)
             cv.create_oval(106, drop_y, 114, drop_y+10,
                             fill=C("GOLD_LT"), outline="")
 
-        cv.create_text(110, 195, text="🍺", font=("Segoe UI", 18))
+        return n >= total - 1
 
     def _start_loading_overlay(self):
+        """Start the pour animation and let it run exactly one full
+        fill cycle, then hide itself automatically. We don't tie the
+        hide timing to how long content-building took — the animation
+        always completes its own arc (empty -> full -> foam settles),
+        so it never looks like it was cut off mid-pour, regardless of
+        whether the underlying tab loads in 5ms or 150ms."""
         self._overlay.place(x=0, y=0, relwidth=1, relheight=1)
         self._overlay.lift()
         self._overlay_frame_n = 0
         self._animate_overlay()
 
     def _animate_overlay(self):
-        self._draw_pour_frame(self._overlay_frame_n)
+        finished = self._draw_pour_frame(self._overlay_frame_n)
         self._overlay_frame_n += 1
-        self._overlay_job = self.after(45, self._animate_overlay)
+        if finished:
+            self._overlay_job = None
+            self._overlay.place_forget()
+        else:
+            self._overlay_job = self.after(self._OVERLAY_FRAME_MS,
+                                            self._animate_overlay)
 
     def _stop_loading_overlay(self):
+        """Kept for safety/compatibility — forces the overlay away
+        immediately. Normal flow lets the animation finish itself via
+        _animate_overlay's own 'finished' check instead of calling this."""
         if self._overlay_job:
             self.after_cancel(self._overlay_job)
             self._overlay_job = None
@@ -357,17 +421,15 @@ class App(tk.Tk):
             else:
                 b.configure(bg=C("SURFACE"), fg=C("MUTED"),
                             font=("Segoe UI",10))
-        # Show the pour animation immediately, build content underneath
-        # while it plays, then swap to the finished tab. The animation
-        # masks any partial-layout flicker on slower machines and
-        # looks intentional rather than like a glitch.
+        # Start the pour animation — it will run its own short, fixed
+        # cycle and hide itself when done. Content is built underneath
+        # while it plays, so the tab is fully ready by the time the
+        # animation finishes, regardless of build speed.
         self._start_loading_overlay()
         self.update_idletasks()
         loader = getattr(self, f"_load_{key}", None)
         if loader: loader()
         self._show(key)
-        self.update_idletasks()
-        self.after(180, self._stop_loading_overlay)
 
     def _show(self, key):
         for k, sf in self._tabs.items():
@@ -497,11 +559,11 @@ class App(tk.Tk):
 
     def _save_wizard(self):
         d = self._wiz_date.get().strip()
-        if not d: messagebox.showerror("Błąd","Wpisz datę!"); return
+        if not d: self._error("Błąd","Wpisz datę!"); return
         try:
             datetime.strptime(d, "%Y-%m-%d")
         except ValueError:
-            messagebox.showerror("Błąd","Nieprawidłowy format daty. Użyj: RRRR-MM-DD")
+            self._error("Błąd","Nieprawidłowy format daty. Użyj: RRRR-MM-DD")
             return
         sizes = db.get_sizes()
         beers = db.get_beers()
@@ -524,7 +586,7 @@ class App(tk.Tk):
                 "open_end": [v.get() or None for v in rv["open"]],
             })
         db.save_day(d, data)
-        messagebox.showinfo("Zapisano",
+        self._info("Zapisano",
             f"Stan początkowy na {d} zapisany ✓\n\n"
             "Możesz teraz zacząć wpisywać codzienne dane!\n"
             "Jutro przy wpisie dnia START uzupełni się automatycznie.")
@@ -947,10 +1009,10 @@ class App(tk.Tk):
         try:
             all_dates = pos_import.get_available_dates(filepath)
         except ValueError as e:
-            messagebox.showerror("Błąd importu", str(e))
+            self._error("Błąd importu", str(e))
             return
         if not all_dates:
-            messagebox.showwarning("Brak danych", "Plik nie zawiera danych sprzedaży.")
+            self._warning("Brak danych", "Plik nie zawiera danych sprzedaży.")
             return
         current_date = self.ev_date.get().strip()
         if current_date in all_dates:
@@ -962,10 +1024,10 @@ class App(tk.Tk):
         try:
             sales = pos_import.get_sales_for_date(filepath, chosen_date)
         except ValueError as e:
-            messagebox.showerror("Błąd", str(e))
+            self._error("Błąd", str(e))
             return
         if not sales:
-            messagebox.showwarning("Brak danych",
+            self._warning("Brak danych",
                 f"Brak sprzedaży w pliku dla daty {chosen_date}.")
             return
         self.ev_date.set(chosen_date)
@@ -992,7 +1054,7 @@ class App(tk.Tk):
         msg = f"✅ Zaimportowano sprzedaż z dnia {chosen_date}\n{filled} pól uzupełnionych."
         if not_found:
             msg += f"\n\nBrak danych dla: {', '.join(not_found)}"
-        messagebox.showinfo("Import POS", msg)
+        self._info("Import POS", msg)
 
     def _pick_date_dialog(self, available_dates: list, current_date: str):
         win = tk.Toplevel(self)
@@ -1054,13 +1116,13 @@ class App(tk.Tk):
 
     def _save_day(self):
         d = self.ev_date.get().strip()
-        if not d: messagebox.showerror("Błąd","Wpisz datę!"); return
+        if not d: self._error("Błąd","Wpisz datę!"); return
         data = self._collect()
         db.save_day(d, data)
-        messagebox.showinfo("Zapisano", f"Dzień {d} zapisany ✓")
+        self._info("Zapisano", f"Dzień {d} zapisany ✓")
 
     def _clear(self):
-        if not messagebox.askyesno("Wyczyścić?","Wyczyścić wszystkie pola?"):
+        if not self._confirm("Wyczyścić?","Wyczyścić wszystkie pola?"):
             return
         for rw in self._kw:
             rw["delivery"].set(""); rw["full_end"].set("")
@@ -1213,7 +1275,7 @@ class App(tk.Tk):
                  font=("Segoe UI",9), padx=8, pady=3).pack(side="left", padx=(0,8))
 
         def delete_day(e=entry_date, c=card):
-            if messagebox.askyesno("Usuń wpis",
+            if self._confirm("Usuń wpis",
                 f"Na pewno usunąć wpis z dnia {e}?\nTej operacji nie można cofnąć."):
                 db.delete_day(e)
                 c.destroy()
@@ -1469,16 +1531,16 @@ class App(tk.Tk):
     def _export_month(self):
         val = self._rep_month.get()
         if not val or "(brak)" in val:
-            messagebox.showwarning("Brak","Wybierz miesiąc"); return
+            self._warning("Brak","Wybierz miesiąc"); return
         month = val.split("[")[-1].rstrip("]").strip()
         p = filedialog.asksaveasfilename(
             defaultextension=".xlsx", filetypes=[("Excel","*.xlsx")],
             initialfile=f"BeerCount_{month}.xlsx")
         if not p: return
         if xl.export_month(month, p):
-            messagebox.showinfo("OK", f"Zapisano:\n{p}")
+            self._info("OK", f"Zapisano:\n{p}")
         else:
-            messagebox.showerror("Błąd","Brak danych")
+            self._error("Błąd","Brak danych")
 
     def _export_year(self):
         val  = self._rep_month.get()
@@ -1488,9 +1550,9 @@ class App(tk.Tk):
             initialfile=f"BeerCount_{year}_roczny.xlsx")
         if not p: return
         if xl.export_year(year, p):
-            messagebox.showinfo("OK", f"Zapisano:\n{p}")
+            self._info("OK", f"Zapisano:\n{p}")
         else:
-            messagebox.showerror("Błąd",f"Brak danych dla roku {year}")
+            self._error("Błąd",f"Brak danych dla roku {year}")
 
     # ══════════════════════════════════════════════
     #  SETTINGS
@@ -1619,7 +1681,96 @@ class App(tk.Tk):
             except: lit = 0.5
             if lbl: sizes.append({"label":lbl,"liters":lit})
         db.save_beers(beers); db.save_sizes(sizes)
-        messagebox.showinfo("Zapisano","Ustawienia zapisane ✓")
+        self._info("Zapisano","Ustawienia zapisane ✓")
+
+    # ══════════════════════════════════════════════
+    #  THEMED DIALOGS — replace raw tkinter.messagebox
+    #  so popups match the app's own light/dark theme
+    #  instead of using the plain OS dialog style.
+    # ══════════════════════════════════════════════
+    _DIALOG_KIND_STYLE = {
+        "info":    ("ℹ️", "GOLD",  "GOLD_BG"),
+        "success": ("✅", "GREEN", "GREEN_BG"),
+        "warning": ("⚠️", "AMBER", "AMBER_BG"),
+        "error":   ("❌", "RED",   "RED_BG"),
+        "confirm": ("❓", "GOLD",  "GOLD_BG"),
+    }
+
+    def _themed_dialog(self, kind, title, message, buttons=("OK",)):
+        """Show a small modal dialog styled like the rest of the app.
+        Returns the text of the button the user clicked (or None if
+        the window was closed via the X button)."""
+        icon, fg_key, bg_key = self._DIALOG_KIND_STYLE.get(
+            kind, self._DIALOG_KIND_STYLE["info"])
+
+        win = tk.Toplevel(self)
+        win.title(title)
+        win.configure(bg=C("SURFACE"))
+        win.resizable(False, False)
+        win.transient(self)
+        win.grab_set()
+
+        top = tk.Frame(win, bg=C(bg_key))
+        top.pack(fill="x")
+        row = tk.Frame(top, bg=C(bg_key))
+        row.pack(padx=20, pady=16, anchor="w")
+        tk.Label(row, text=icon, font=("Segoe UI", 18),
+                 bg=C(bg_key)).pack(side="left", padx=(0, 12))
+        tk.Label(row, text=title, font=("Segoe UI", 12, "bold"),
+                 fg=C(fg_key), bg=C(bg_key)).pack(side="left")
+
+        tk.Frame(win, bg=C("BORDER"), height=1).pack(fill="x")
+
+        body = tk.Frame(win, bg=C("SURFACE"))
+        body.pack(fill="both", expand=True, padx=22, pady=18)
+        tk.Label(body, text=message, font=("Segoe UI", 10),
+                 fg=C("TEXT"), bg=C("SURFACE"), justify="left",
+                 wraplength=360).pack(anchor="w")
+
+        result = {"value": None}
+
+        def choose(val):
+            result["value"] = val
+            win.destroy()
+
+        btn_row = tk.Frame(win, bg=C("SURFACE"))
+        btn_row.pack(fill="x", padx=22, pady=(0, 18))
+        # The last label in `buttons` is the primary/confirm action
+        # (e.g. "Tak", "OK") and should render rightmost and styled
+        # as the main action — that's also where users expect it.
+        for label in reversed(buttons):
+            is_primary = (label == buttons[-1])
+            make_btn(
+                btn_row, label, lambda l=label: choose(l),
+                bg=(C("GOLD") if is_primary else C("SURFACE")),
+                fg=("white" if is_primary else C("MUTED")),
+                font=("Segoe UI", 10, "bold" if is_primary else "normal"),
+                padx=18, pady=6
+            ).pack(side="right", padx=(8, 0))
+
+        win.update_idletasks()
+        w, h = win.winfo_width(), win.winfo_height()
+        x = self.winfo_x() + (self.winfo_width() - w) // 2
+        y = self.winfo_y() + (self.winfo_height() - h) // 2
+        win.geometry(f"+{x}+{y}")
+
+        win.wait_window()
+        return result["value"]
+
+    def _info(self, title, message):
+        self._themed_dialog("success", title, message, buttons=("OK",))
+
+    def _error(self, title, message):
+        self._themed_dialog("error", title, message, buttons=("OK",))
+
+    def _warning(self, title, message):
+        self._themed_dialog("warning", title, message, buttons=("OK",))
+
+    def _confirm(self, title, message):
+        """Returns True if the user confirmed, False otherwise."""
+        choice = self._themed_dialog(
+            "confirm", title, message, buttons=("Anuluj", "Tak"))
+        return choice == "Tak"
 
     def _show_about(self):
         win = tk.Toplevel(self)
