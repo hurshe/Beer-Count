@@ -26,18 +26,20 @@ LIGHT = {
     "BORDER":   "#dde3ea", "MUTED":   "#64748b", "TEXT": "#1e2530",
     "PREV_BG":  "#e7ebef",
     "INFO_BG":  "#e8f4fd", "INFO_FG": "#1a5276",
+    "DELIVERY_BG": "#fdecd9",
 }
 
 DARK = {
-    "GOLD":     "#e0b35c", "GOLD_LT": "#f0cd85", "GOLD_BG": "#3a3322",
-    "GREEN":    "#6fcf97", "GREEN_BG": "#1d3327",
-    "RED":      "#e0726a", "RED_BG":  "#3a2222",
-    "AMBER":    "#e0b35c", "AMBER_BG": "#3a3022",
-    "ORANGE":   "#e08a4f", "ORANGE_BG": "#3a2a1c",
-    "BG":       "#23262b", "SURFACE": "#2c3036",
-    "BORDER":   "#3d424a", "MUTED":   "#9aa1ab", "TEXT": "#e8e9eb",
-    "PREV_BG":  "#33373d",
-    "INFO_BG":  "#1d3140", "INFO_FG": "#8fc4e8",
+    "GOLD":     "#f0b272", "GOLD_LT": "#ffc98c", "GOLD_BG": "#4a3420",
+    "GREEN":    "#7ee0a8", "GREEN_BG": "#1a3326",
+    "RED":      "#ff8a80", "RED_BG":  "#3d1f1f",
+    "AMBER":    "#ffcf7a", "AMBER_BG": "#4a3a18",
+    "ORANGE":   "#ff9d5c", "ORANGE_BG": "#3d2614",
+    "BG":       "#15171a", "SURFACE": "#1f2228",
+    "BORDER":   "#383d46", "MUTED":   "#aab0bb", "TEXT": "#f2f3f5",
+    "PREV_BG":  "#2a2e36",
+    "INFO_BG":  "#16263a", "INFO_FG": "#9cd0f5",
+    "DELIVERY_BG": "#3d2e1a",
 }
 
 THEME = dict(LIGHT)
@@ -594,7 +596,7 @@ class App(tk.Tk):
             rv["start_lbl"].grid(row=ri, column=1, sticky="ew", padx=2, pady=2)
 
             rv["delivery"] = tk.StringVar()
-            e_del = make_entry(f, rv["delivery"], bg=C("GOLD_BG"))
+            e_del = make_entry(f, rv["delivery"], bg=C("DELIVERY_BG"))
             e_del.grid(row=ri, column=2, sticky="ew", padx=2, pady=2)
             e_del.bind("<KeyRelease>", lambda _: self._recalc())
             self._all_entries.append(e_del)
