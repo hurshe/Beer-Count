@@ -32,3 +32,4 @@ jobs:
         with:
           name: BeerCount_Windows
           path: dist/BeerCount/
+          
