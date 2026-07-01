@@ -71,10 +71,10 @@ LIGHT = {
 }
 
 DIFF_CHIP = {
-    "ok":   ("green",  "green_dim", "✅"),
-    "warn": ("amber",  "amber_dim", "🟡"),
-    "over": ("orange", "orange_dim","🟠"),
-    "bad":  ("red",    "red_dim",   "🔴"),
+    "ok":   ("green",  "green_dim", "[OK]"),
+    "warn": ("amber",  "amber_dim", "[!]"),
+    "over": ("orange", "orange_dim","[!!]"),
+    "bad":  ("red",    "red_dim",   "[X]"),
 }
 
 # ── State ────────────────────────────────────────────────
@@ -132,17 +132,19 @@ def build_theme():
             dpg.add_theme_color(dpg.mvThemeCol_Separator,     PAL["border"])
             dpg.add_theme_color(dpg.mvThemeCol_SeparatorHovered, PAL["gold"])
 
-            dpg.add_theme_style(dpg.mvStyleVar_WindowRounding,   6)
-            dpg.add_theme_style(dpg.mvStyleVar_ChildRounding,    4)
-            dpg.add_theme_style(dpg.mvStyleVar_FrameRounding,    3)
-            dpg.add_theme_style(dpg.mvStyleVar_PopupRounding,    4)
-            dpg.add_theme_style(dpg.mvStyleVar_TabRounding,      4)
-            dpg.add_theme_style(dpg.mvStyleVar_FramePadding,     8, 5)
-            dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing,      6, 4)
-            dpg.add_theme_style(dpg.mvStyleVar_CellPadding,      6, 4)
-            dpg.add_theme_style(dpg.mvStyleVar_WindowPadding,    12, 10)
-            dpg.add_theme_style(dpg.mvStyleVar_IndentSpacing,    16)
-            dpg.add_theme_style(dpg.mvStyleVar_ScrollbarSize,    10)
+            dpg.add_theme_style(dpg.mvStyleVar_WindowRounding,   8)
+            dpg.add_theme_style(dpg.mvStyleVar_ChildRounding,    6)
+            dpg.add_theme_style(dpg.mvStyleVar_FrameRounding,    5)
+            dpg.add_theme_style(dpg.mvStyleVar_PopupRounding,    6)
+            dpg.add_theme_style(dpg.mvStyleVar_TabRounding,      6)
+            dpg.add_theme_style(dpg.mvStyleVar_FramePadding,    10, 6)
+            dpg.add_theme_style(dpg.mvStyleVar_ItemSpacing,      8, 5)
+            dpg.add_theme_style(dpg.mvStyleVar_CellPadding,      8, 5)
+            dpg.add_theme_style(dpg.mvStyleVar_WindowPadding,   14, 12)
+            dpg.add_theme_style(dpg.mvStyleVar_IndentSpacing,   18)
+            dpg.add_theme_style(dpg.mvStyleVar_ScrollbarSize,   12)
+            dpg.add_theme_style(dpg.mvStyleVar_GrabRounding,     5)
+            dpg.add_theme_style(dpg.mvStyleVar_ButtonTextAlign, 0.5, 0.5)
     _global_theme = t
     dpg.bind_theme(t)
 
@@ -179,10 +181,11 @@ def _colored_text(parent, text, color_key, **kw):
     return lbl
 
 def _section_header(parent, label):
-    dpg.add_separator(parent=parent)
-    lbl = dpg.add_text(f"  {label}", parent=parent)
+    dpg.add_spacer(height=6, parent=parent)
+    lbl = dpg.add_text(f"  {label.upper()}", parent=parent)
     _recolor_text(lbl, "gold")
     dpg.add_separator(parent=parent)
+    dpg.add_spacer(height=4, parent=parent)
 
 # ════════════════════════════════════════════════════════
 #  DIALOG SYSTEM  (replaces tkinter messagebox)
@@ -199,7 +202,7 @@ def show_info(title, message):
                     pos=[dpg.get_viewport_width()//2-210,
                          dpg.get_viewport_height()//2-80]):
         dpg.add_spacer(height=8)
-        _colored_text(dpg.last_container(), f"✅  {title}", "green")
+        _colored_text(dpg.last_container(), f"[OK]  {title}", "green")
         dpg.add_spacer(height=6)
         dpg.add_text(message, wrap=380)
         dpg.add_spacer(height=12)
@@ -214,7 +217,7 @@ def show_error(title, message):
                     pos=[dpg.get_viewport_width()//2-210,
                          dpg.get_viewport_height()//2-80]):
         dpg.add_spacer(height=8)
-        _colored_text(dpg.last_container(), f"❌  {title}", "red")
+        _colored_text(dpg.last_container(), f"{title}", "red")
         dpg.add_spacer(height=6)
         dpg.add_text(message, wrap=380)
         dpg.add_spacer(height=12)
@@ -229,7 +232,7 @@ def show_warning(title, message):
                     pos=[dpg.get_viewport_width()//2-210,
                          dpg.get_viewport_height()//2-80]):
         dpg.add_spacer(height=8)
-        _colored_text(dpg.last_container(), f"⚠️  {title}", "amber")
+        _colored_text(dpg.last_container(), f"{title}", "amber")
         dpg.add_spacer(height=6)
         dpg.add_text(message, wrap=380)
         dpg.add_spacer(height=12)
@@ -247,7 +250,7 @@ def show_confirm(title, message, on_yes):
                     pos=[dpg.get_viewport_width()//2-210,
                          dpg.get_viewport_height()//2-80]):
         dpg.add_spacer(height=8)
-        _colored_text(dpg.last_container(), f"❓  {title}", "gold")
+        _colored_text(dpg.last_container(), f"{title}", "gold")
         dpg.add_spacer(height=6)
         dpg.add_text(message, wrap=380)
         dpg.add_spacer(height=12)
@@ -428,7 +431,7 @@ def _save_day():
         return
     data = _collect()
     db.save_day(d, data)
-    show_info("Zapisano", f"Dzień {d} zapisany ✓")
+    show_info("Zapisano", f"Dzien {d} zapisany")
 
 def _clear_day():
     def do_clear():
@@ -520,7 +523,7 @@ def build_entry_tab(parent):
 
         # ── info banner ───────────────────────────
         lbl = dpg.add_text(
-            "✅  START ładuje się automatycznie z poprzedniego dnia "
+            "[OK]  START ładuje się automatycznie z poprzedniego dnia "
             "— wpisujesz tylko END + POS.",
             wrap=dpg.get_viewport_width()-40)
         _recolor_text(lbl, "green")
@@ -542,7 +545,7 @@ def build_entry_tab(parent):
                                "entry_date", _today_str()) or _load_prev_starts())
             dpg.add_button(label="Następny ▶",
                            callback=lambda: _shift_entry_date(1))
-            imp_btn = dpg.add_button(label="📂 Importuj POS (xlsx)",
+            imp_btn = dpg.add_button(label="Importuj POS (.xlsx)",
                                      callback=_import_pos)
             if "btn_info" in _color_themes:
                 dpg.bind_item_theme(imp_btn, _color_themes["btn_info"])
@@ -557,7 +560,7 @@ def build_entry_tab(parent):
 
             # ── Col 1: Stan kegów ─────────────────
             with dpg.child_window(width=col_w, height=-220, border=True):
-                _colored_text(dpg.last_container(), "🛢  Stan kegów", "gold")
+                _colored_text(dpg.last_container(), "Stan kegow", "gold")
                 dpg.add_text(
                     "szare=START auto | żółte=dostawa | Tara 30L=11kg 20L=7kg",
                     color=PAL["muted"])
@@ -617,7 +620,7 @@ def build_entry_tab(parent):
 
             # ── Col 2: Sprzedaż POS ───────────────
             with dpg.child_window(width=col_w, height=-220, border=True):
-                _colored_text(dpg.last_container(), "💻  Sprzedaż POS", "gold")
+                _colored_text(dpg.last_container(), "Sprzedaz POS", "gold")
                 dpg.add_spacer(height=20)
 
                 with dpg.table(header_row=True, resizable=False,
@@ -647,7 +650,7 @@ def build_entry_tab(parent):
 
             # ── Col 3: Korekty ────────────────────
             with dpg.child_window(width=col_w, height=-220, border=True):
-                _colored_text(dpg.last_container(), "⚠️  Korekty", "gold")
+                _colored_text(dpg.last_container(), "Korekty", "gold")
                 dpg.add_spacer(height=20)
 
                 with dpg.table(header_row=True, resizable=False,
@@ -676,7 +679,7 @@ def build_entry_tab(parent):
         dpg.add_spacer(height=8)
 
         # ── Wynik dnia ────────────────────────────
-        _colored_text(dpg.last_container(), "📊  Wynik dnia", "gold")
+        _colored_text(dpg.last_container(), "Wynik dnia", "gold")
         dpg.add_separator()
 
         with dpg.table(header_row=False, resizable=False,
@@ -692,14 +695,14 @@ def build_entry_tab(parent):
                     dpg.add_text(beer["name"], color=PAL["text"])
                     il = dpg.add_text("START 0L  Del +0L  END 0L  POS 0L  Kor −0L",
                                       color=PAL["muted"])
-                    dl = dpg.add_text("✅ +0.00L", color=PAL["green"])
+                    dl = dpg.add_text("[OK] +0.00L", color=PAL["green"])
                 lbls["start_lbl"] = il
                 lbls["diff_lbl"]  = dl
                 _sum_tags.append(lbls)
 
         dpg.add_separator()
         _sum_total_tag = dpg.add_text(
-            "✅  ŁĄCZNIE  +0.00L   POS: 0.0L   Kor: 0.0L",
+            "[OK]  ŁĄCZNIE  +0.00L   POS: 0.0L   Kor: 0.0L",
             color=PAL["green"])
 
         dpg.add_spacer(height=10)
@@ -715,13 +718,13 @@ def build_entry_tab(parent):
 
         # ── action buttons ───────────────────────
         with dpg.group(horizontal=True):
-            dpg.add_button(label="💾  Zapisz dzień", callback=_save_day,
+            dpg.add_button(label="Zapisz dzien", callback=_save_day,
                            height=34)
             dpg.add_spacer(width=6)
-            dpg.add_button(label="🔄  Przelicz", callback=_recalc,
+            dpg.add_button(label="Przelicz", callback=_recalc,
                            height=34)
             dpg.add_spacer(width=6)
-            clr = dpg.add_button(label="🗑  Wyczyść",
+            clr = dpg.add_button(label="Wyczysc",
                                   callback=_clear_day, height=34)
             if "btn_muted" in _color_themes:
                 dpg.bind_item_theme(clr, _color_themes["btn_muted"])
@@ -796,11 +799,11 @@ def _build_hist_card(parent, entry_date, data, sizes):
 
         dpg.add_spacer(height=4)
         with dpg.group(horizontal=True):
-            dpg.add_button(label="✏️ Edytuj",
+            dpg.add_button(label="Edytuj",
                            callback=lambda s=0,a=0,u=(entry_date,data):
                                _open_edit(u[0], u[1]))
             dpg.add_spacer(width=6)
-            dpg.add_button(label="🗑 Usuń",
+            dpg.add_button(label="Usun",
                            callback=lambda s=0,a=0,u=entry_date:
                                show_confirm("Usuń wpis",
                                    f"Usunąć wpis z {u}?",
@@ -857,10 +860,10 @@ def build_report_tab(parent):
                           default_value=choices[0], width=200,
                           callback=_render_report)
             dpg.add_spacer(width=12)
-            dpg.add_button(label="📥 Export Excel (miesiąc)",
+            dpg.add_button(label="Export Excel (miesiac)",
                            callback=_export_month)
             dpg.add_spacer(width=6)
-            dpg.add_button(label="📥 Export Excel (rok)",
+            dpg.add_button(label="Export Excel (rok)",
                            callback=_export_year)
         dpg.add_spacer(height=8)
         with dpg.child_window(tag="rep_body", border=False,
@@ -996,7 +999,7 @@ def build_settings_tab(parent):
     _beer_rows = []
     _size_rows = []
     with dpg.group(parent=parent):
-        _colored_text(dpg.last_container(), "🍺  Piwa na kranie", "gold")
+        _colored_text(dpg.last_container(), "Piwa na kranie", "gold")
         dpg.add_separator()
         with dpg.table(tag="set_beers_tbl", header_row=True,
                        resizable=False, borders_innerV=True,
@@ -1012,7 +1015,7 @@ def build_settings_tab(parent):
                        callback=lambda: _add_beer_settings_row())
         dpg.add_spacer(height=16)
 
-        _colored_text(dpg.last_container(), "🥃  Rozmiary porcji POS", "gold")
+        _colored_text(dpg.last_container(), "Rozmiary porcji POS", "gold")
         dpg.add_separator()
         with dpg.table(tag="set_sizes_tbl", header_row=True,
                        resizable=False, borders_innerV=True,
@@ -1029,10 +1032,10 @@ def build_settings_tab(parent):
         dpg.add_spacer(height=16)
 
         with dpg.group(horizontal=True):
-            dpg.add_button(label="💾  Zapisz ustawienia",
+            dpg.add_button(label="Zapisz ustawienia",
                            callback=_save_settings, height=34)
             dpg.add_spacer(width=8)
-            ab = dpg.add_button(label="ℹ️  O programie",
+            ab = dpg.add_button(label="O programie",
                                  callback=_show_about, height=34)
             if "btn_muted" in _color_themes:
                 dpg.bind_item_theme(ab, _color_themes["btn_muted"])
@@ -1084,7 +1087,7 @@ def _save_settings():
         if lbl: sizes.append({"label":lbl,"liters":val})
     db.save_beers(beers)
     db.save_sizes(sizes)
-    show_info("Zapisano","Ustawienia zapisane ✓")
+    show_info("Zapisano","Ustawienia zapisane")
 
 def _show_about():
     tag = "_about_modal"
@@ -1093,7 +1096,7 @@ def _show_about():
                     width=380, height=-1, no_resize=True,
                     pos=[dpg.get_viewport_width()//2-190,
                          dpg.get_viewport_height()//2-120]):
-        dpg.add_text("🍺  Beer Count", color=PAL["gold"])
+        dpg.add_text("  Beer Count", color=PAL["gold"])
         dpg.add_separator()
         dpg.add_spacer(height=8)
         for k, v in [("Wersja:", "1.0.0  (2026)"),
@@ -1119,9 +1122,9 @@ def toggle_theme():
     db.save_theme(_theme_mode)
     build_theme()
     build_color_themes()
-    icon = "☀️" if _theme_mode == "dark" else "🌙"
+    _lbl = "[ Jasny ]" if _theme_mode == "dark" else "[ Ciemny ]"
     if dpg.does_item_exist("theme_btn"):
-        dpg.set_item_label("theme_btn", icon)
+        dpg.set_item_label("theme_btn", _lbl)
 
 # ════════════════════════════════════════════════════════
 #  MAIN WINDOW BUILD
@@ -1144,18 +1147,30 @@ def build_ui():
                     no_resize=True, no_scrollbar=True):
 
         # ── top bar ───────────────────────────────
+        dpg.add_spacer(height=6)
         with dpg.group(horizontal=True):
-            dpg.add_text("🍺", color=PAL["gold"])
-            dpg.add_text(" Beer Count", color=PAL["gold"])
-            dpg.add_text("  System kontroli piwa", color=PAL["muted"])
-            dpg.add_spacer(width=-180)
-            dpg.add_text(date.today().strftime("%A, %d.%m.%Y"),
-                         color=PAL["muted"])
-            dpg.add_spacer(width=12)
-            icon = "☀️" if _theme_mode == "dark" else "🌙"
-            dpg.add_button(tag="theme_btn", label=icon,
-                           callback=toggle_theme, width=36, height=24)
-
+            dpg.add_spacer(width=8)
+            with dpg.group(horizontal=True):
+                t1 = dpg.add_text("Beer Count")
+                _recolor_text(t1, "gold")
+                dpg.add_spacer(width=14)
+                t2 = dpg.add_text("System kontroli piwa")
+                _recolor_text(t2, "muted")
+                dpg.add_spacer(width=20)
+                t3 = dpg.add_text("|")
+                _recolor_text(t3, "border")
+                dpg.add_spacer(width=20)
+                t4 = dpg.add_text(date.today().strftime("%A, %d.%m.%Y"))
+                _recolor_text(t4, "muted")
+                dpg.add_spacer(width=40)
+                _theme_label = "[ Jasny ]" if _theme_mode == "dark" else "[ Ciemny ]"
+                theme_btn = dpg.add_button(
+                    tag="theme_btn", label=_theme_label,
+                    callback=toggle_theme, width=100, height=28)
+                if "btn_muted" in _color_themes:
+                    dpg.bind_item_theme(theme_btn, _color_themes["btn_muted"])
+                dpg.add_spacer(width=8)
+        dpg.add_spacer(height=6)
         dpg.add_separator()
         dpg.add_spacer(height=4)
 
@@ -1184,22 +1199,22 @@ def build_ui():
 
         # ── tab bar ───────────────────────────────
         with dpg.tab_bar(tag="main_tabs"):
-            with dpg.tab(label="📋  Wpis dnia"):
+            with dpg.tab(label="Wpis dnia"):
                 with dpg.child_window(autosize_x=True, autosize_y=True,
                                        border=False):
                     build_entry_tab(dpg.last_container())
 
-            with dpg.tab(label="📅  Historia"):
+            with dpg.tab(label="Historia"):
                 with dpg.child_window(autosize_x=True, autosize_y=True,
                                        border=False):
                     build_history_tab(dpg.last_container())
 
-            with dpg.tab(label="📊  Raport"):
+            with dpg.tab(label="Raport"):
                 with dpg.child_window(autosize_x=True, autosize_y=True,
                                        border=False):
                     build_report_tab(dpg.last_container())
 
-            with dpg.tab(label="⚙️  Ustawienia"):
+            with dpg.tab(label="Ustawienia"):
                 with dpg.child_window(autosize_x=True, autosize_y=True,
                                        border=False):
                     build_settings_tab(dpg.last_container())
@@ -1211,12 +1226,50 @@ def build_ui():
 # ════════════════════════════════════════════════════════
 #  ENTRY POINT
 # ════════════════════════════════════════════════════════
+def _load_fonts():
+    """Load Segoe UI (Windows system font) with full Polish unicode range.
+    Falls back to NotoSans bundled with the app, then to DPG default."""
+    # Unicode ranges: Basic Latin + Latin Extended (covers all Polish chars)
+    polish_range = [0x0020, 0x00FF,   # Basic Latin + Latin-1 Supplement
+                    0x0100, 0x017F,   # Latin Extended-A (ą ę ó ś ź ż ń ć ł etc.)
+                    0x2000, 0x206F,   # General Punctuation
+                    0]                # null terminator required by DPG
+
+    font_size = 17.0
+
+    with dpg.font_registry():
+        # Try system Segoe UI first (always present on Windows 8+)
+        segoe = r"C:/Windows/Fonts/segoeui.ttf"
+        noto  = resource_path("NotoSans-Regular.ttf")
+
+        loaded = False
+        for font_path in [segoe, noto]:
+            if os.path.exists(font_path):
+                try:
+                    with dpg.font(font_path, font_size,
+                                  tag="default_font") as f:
+                        dpg.add_font_range_hint(dpg.mvFontRangeHint_Default)
+                        dpg.add_font_range_hint(dpg.mvFontRangeHint_Cyrillic)
+                        # Add Polish characters explicitly
+                        dpg.add_font_chars([
+                            ord(c) for c in
+                            "ąćęłńóśźżĄĆĘŁŃÓŚŹŻ"
+                        ])
+                    dpg.bind_font("default_font")
+                    loaded = True
+                    break
+                except Exception as e:
+                    pass  # Try next font
+        if not loaded:
+            pass  # DPG default font (ASCII only) — better than crashing
+
+
 if __name__ == "__main__":
     dpg.create_context()
     dpg.create_viewport(
-        title="🍺 Beer Count",
-        width=1280, height=800,
-        min_width=900, min_height=600,
+        title="Beer Count — System kontroli piwa",
+        width=1400, height=860,
+        min_width=1000, min_height=660,
         resizable=True)
 
     ico = resource_path("icon.ico")
@@ -1227,6 +1280,7 @@ if __name__ == "__main__":
         except: pass
 
     dpg.setup_dearpygui()
+    _load_fonts()
     build_ui()
     dpg.show_viewport()
     dpg.start_dearpygui()
