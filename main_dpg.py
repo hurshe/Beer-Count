@@ -319,7 +319,7 @@ def _recalc():
         t = db.corr_liters(data["corr"][i])
         corr_grand += t
         if dpg.does_item_exist(cw.get("razem_lbl","")):
-            dpg.set_value(cw["razem_lbl"], f"−{t:.2f}")
+            dpg.set_value(cw["razem_lbl"], f"-{t:.2f}")
 
     for i, rv in enumerate(_keg_tags):
         if i >= len(data["kegs"]): break
@@ -523,8 +523,7 @@ def build_entry_tab(parent):
 
         # ── info banner ───────────────────────────
         lbl = dpg.add_text(
-            "[OK]  START ładuje się automatycznie z poprzedniego dnia "
-            "— wpisujesz tylko END + POS.",
+            "START laduje sie automatycznie z poprzedniego dnia - wpisujesz tylko END + POS.",
             wrap=dpg.get_viewport_width()-40)
         _recolor_text(lbl, "green")
 
@@ -606,7 +605,7 @@ def build_entry_tab(parent):
                             for j in range(3):
                                 kg_tag = f"keg_open_{i}_{j}"
                                 dpg.add_input_text(tag=kg_tag, width=-1,
-                                                   hint="—",
+                                                   hint="",
                                                    callback=lambda: _recalc())
                                 rv["open_end"].append(kg_tag)
 
@@ -623,14 +622,15 @@ def build_entry_tab(parent):
                 _colored_text(dpg.last_container(), "Sprzedaz POS", "gold")
                 dpg.add_spacer(height=20)
 
-                with dpg.table(header_row=True, resizable=False,
+                with dpg.table(header_row=True, resizable=True,
                                borders_innerV=True, borders_outerH=True,
-                               scrollY=False, policy=dpg.mvTable_SizingStretchProp):
-                    dpg.add_table_column(label="Piwo",  init_width_or_weight=1.8)
+                               scrollY=False, scrollX=True,
+                               policy=dpg.mvTable_SizingFixedFit):
+                    dpg.add_table_column(label="Piwo",  width_fixed=True, init_width_or_weight=90)
                     for sz in sizes:
                         dpg.add_table_column(label=sz["label"],
-                                             init_width_or_weight=1.0)
-                    dpg.add_table_column(label="Razem", init_width_or_weight=1.2)
+                                             width_fixed=True, init_width_or_weight=52)
+                    dpg.add_table_column(label="Razem", width_fixed=True, init_width_or_weight=62)
 
                     for i, beer in enumerate(beers):
                         pw = {"beer_name": beer["name"], "sizes": []}
@@ -653,14 +653,15 @@ def build_entry_tab(parent):
                 _colored_text(dpg.last_container(), "Korekty", "gold")
                 dpg.add_spacer(height=20)
 
-                with dpg.table(header_row=True, resizable=False,
+                with dpg.table(header_row=True, resizable=True,
                                borders_innerV=True, borders_outerH=True,
-                               scrollY=False, policy=dpg.mvTable_SizingStretchProp):
-                    dpg.add_table_column(label="Piwo",     init_width_or_weight=1.8)
-                    dpg.add_table_column(label="Spill",    init_width_or_weight=1.0)
-                    dpg.add_table_column(label="Void",     init_width_or_weight=1.0)
-                    dpg.add_table_column(label="Open Bar", init_width_or_weight=1.0)
-                    dpg.add_table_column(label="Razem",    init_width_or_weight=1.2)
+                               scrollY=False, scrollX=True,
+                               policy=dpg.mvTable_SizingFixedFit):
+                    dpg.add_table_column(label="Piwo",     width_fixed=True, init_width_or_weight=90)
+                    dpg.add_table_column(label="Spill",    width_fixed=True, init_width_or_weight=60)
+                    dpg.add_table_column(label="Void",     width_fixed=True, init_width_or_weight=60)
+                    dpg.add_table_column(label="Open Bar", width_fixed=True, init_width_or_weight=75)
+                    dpg.add_table_column(label="Razem",    width_fixed=True, init_width_or_weight=62)
 
                     for i, beer in enumerate(beers):
                         cv = {"name": beer["name"]}
@@ -672,7 +673,7 @@ def build_entry_tab(parent):
                                                    hint="0",
                                                    callback=lambda: _recalc())
                                 cv[field] = ft
-                            rl = dpg.add_text("−0.00", color=PAL["red"])
+                            rl = dpg.add_text("-0.00", color=PAL["red"])
                             cv["razem_lbl"] = rl
                         _corr_tags.append(cv)
 
@@ -1267,7 +1268,7 @@ def _load_fonts():
 if __name__ == "__main__":
     dpg.create_context()
     dpg.create_viewport(
-        title="Beer Count — System kontroli piwa",
+        title="Beer Count | System kontroli piwa",
         width=1400, height=860,
         min_width=1000, min_height=660,
         resizable=True)
