@@ -8,7 +8,7 @@ import database as db
 import export_excel as xl
 import pos_import as pos
 from datetime import date, timedelta, datetime
-import os, sys, json
+import os, sys
 
 # ── Resource path (PyInstaller-compatible) ──────────────
 def resource_path(name):
@@ -730,7 +730,7 @@ def build_history_tab(parent):
 def _render_history():
     if not dpg.does_item_exist("hist_list"): return
     dpg.delete_item("hist_list", children_only=True)
-    month = (dpg.get_value("hist_month") or "").split("[")[-1].rstrip("]").strip()
+    month = (dpg.get_value("hist_month") or "").strip()
     entries = db.get_days_for_month(month)
     if not entries:
         dpg.add_text("Brak wpisów.", color=PAL["muted"], parent="hist_list")
@@ -855,7 +855,7 @@ def _render_report():
     if not dpg.does_item_exist("rep_body"): return
     dpg.delete_item("rep_body", children_only=True)
     val   = dpg.get_value("rep_month") or ""
-    month = val.split("[")[-1].rstrip("]").strip()
+    month = val.strip()
     entries = db.get_days_for_month(month)
     if not entries:
         dpg.add_text("Brak wpisów.", color=PAL["muted"], parent="rep_body")
@@ -942,17 +942,17 @@ def _render_report():
             dpg.add_text(f"{icon} {d_diff:+.2f}L", color=PAL[fg])
 
 def _export_month():
-    month = (dpg.get_value("rep_month") or "").split("[")[-1].rstrip("]").strip()
+    month = (dpg.get_value("rep_month") or "").strip()
     if not month: return
     dpg.show_item("export_month_dialog")
 
 def _export_year():
-    val  = dpg.get_value("rep_month") or ""
-    year = val.split("[")[-1][:4] if "[" in val else str(date.today().year)
+    val  = (dpg.get_value("rep_month") or "").strip()
+    year = val[:4] if len(val) >= 4 else str(date.today().year)
     dpg.show_item("export_year_dialog")
 
 def _on_export_month_selected(sender, app_data):
-    month = (dpg.get_value("rep_month") or "").split("[")[-1].rstrip("]").strip()
+    month = (dpg.get_value("rep_month") or "").strip()
     p = app_data.get("file_path_name","")
     if not p: return
     if not p.endswith(".xlsx"): p += ".xlsx"
@@ -962,8 +962,8 @@ def _on_export_month_selected(sender, app_data):
         show_error("Błąd", "Brak danych")
 
 def _on_export_year_selected(sender, app_data):
-    val  = dpg.get_value("rep_month") or ""
-    year = val.split("[")[-1][:4] if "[" in val else str(date.today().year)
+    val  = (dpg.get_value("rep_month") or "").strip()
+    year = val[:4] if len(val) >= 4 else str(date.today().year)
     p = app_data.get("file_path_name","")
     if not p: return
     if not p.endswith(".xlsx"): p += ".xlsx"
@@ -976,6 +976,9 @@ def _on_export_year_selected(sender, app_data):
 #  SETTINGS TAB
 # ════════════════════════════════════════════════════════
 def build_settings_tab(parent):
+    global _beer_rows, _size_rows
+    _beer_rows = []
+    _size_rows = []
     with dpg.group(parent=parent):
         _colored_text(dpg.last_container(), "🍺  Piwa na kranie", "gold")
         dpg.add_separator()
@@ -1099,7 +1102,7 @@ def _show_about():
 # ════════════════════════════════════════════════════════
 def toggle_theme():
     global _theme_mode, PAL
-    _theme_mode = "dark" if _theme_mode == "light" else "dark"
+    _theme_mode = "light" if _theme_mode == "dark" else "dark"
     PAL = dict(DARK if _theme_mode == "dark" else LIGHT)
     db.save_theme(_theme_mode)
     build_theme()
