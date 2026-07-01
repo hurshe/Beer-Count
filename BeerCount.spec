@@ -1,25 +1,23 @@
 # -*- mode: python ; coding: utf-8 -*-
-import os, sys
 
 a = Analysis(
-    ['main.py'],
+    ['main_dpg.py'],
     pathex=[],
     binaries=[],
-    datas=[('icon.ico', '.'), ('pos_import.py', '.')],
+    datas=[
+        ('icon.ico', '.'),
+        ('pos_import.py', '.'),
+        ('database.py', '.'),
+        ('export_excel.py', '.'),
+    ],
     hiddenimports=[
-        'tkinter',
-        'tkinter.messagebox',
-        'tkinter.filedialog',
-        'tkinter.ttk',
-        '_tkinter',
+        'dearpygui',
+        'dearpygui.dearpygui',
         'openpyxl',
         'openpyxl.styles',
         'openpyxl.utils',
         'sqlite3',
         '_sqlite3',
-        'PIL',
-        'PIL.Image',
-        'PIL.ImageTk',
         'pandas',
         'pandas.core',
         'pandas.io.excel',
@@ -29,7 +27,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['customtkinter'],
+    excludes=['tkinter', 'customtkinter', 'PIL'],
     noarchive=False,
 )
 
@@ -40,7 +38,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='BeerCount_HRC',
+    name='BeerCount',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -55,5 +53,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name='BeerCount_HRC',
+    name='BeerCount',
 )
