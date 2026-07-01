@@ -171,20 +171,17 @@ def _diff_chip_parts(diff):
     return fg_key, bg_key, icon, s
 
 def _colored_text(parent, text, color_key, **kw):
-    with dpg.theme() as t:
-        with dpg.theme_component(dpg.mvText):
-            dpg.add_theme_color(dpg.mvThemeCol_Text, PAL[color_key])
+    """Add text and bind pre-built color theme to it."""
     lbl = dpg.add_text(text, parent=parent, **kw)
-    dpg.bind_item_theme(lbl, t)
+    theme = _color_themes.get(color_key)
+    if theme and dpg.does_item_exist(theme):
+        dpg.bind_item_theme(lbl, theme)
     return lbl
 
 def _section_header(parent, label):
     dpg.add_separator(parent=parent)
-    with dpg.theme() as t:
-        with dpg.theme_component(dpg.mvText):
-            dpg.add_theme_color(dpg.mvThemeCol_Text, PAL["gold"])
     lbl = dpg.add_text(f"  {label}", parent=parent)
-    dpg.bind_item_theme(lbl, t)
+    _recolor_text(lbl, "gold")
     dpg.add_separator(parent=parent)
 
 # ════════════════════════════════════════════════════════
@@ -357,15 +354,45 @@ def _recalc():
             f"POS: {pos_grand:.1f}L   Kor: {corr_grand:.1f}L")
         _recolor_text(_sum_total_tag, fg)
 
-def _recolor_text(tag, color_key):
-    """Apply a text color to an existing item by swapping its theme."""
-    theme_tag = f"_col_theme_{tag}"
-    if dpg.does_item_exist(theme_tag):
-        dpg.delete_item(theme_tag)
-    with dpg.theme(tag=theme_tag):
-        with dpg.theme_component(dpg.mvText):
-            dpg.add_theme_color(dpg.mvThemeCol_Text, PAL[color_key])
-    dpg.bind_item_theme(tag, theme_tag)
+# Pre-built text-color themes — created once at startup in build_color_themes(),
+# reused for every _recolor_text call. Avoids the "Alias already exists" error
+# that happens when creating/deleting themes with the same tag repeatedly.
+_color_themes: dict = {}   # color_key -> dpg theme id
+
+def build_color_themes():
+    """Create one text-color theme per palette key. Call once after context init."""
+    global _color_themes
+    # Delete previous themes to avoid accumulation across toggle_theme calls
+    for t in _color_themes.values():
+        if dpg.does_item_exist(t):
+            dpg.delete_item(t)
+    _color_themes = {}
+    for key, rgba in PAL.items():
+        with dpg.theme() as t:
+            with dpg.theme_component(dpg.mvAll):
+                dpg.add_theme_color(dpg.mvThemeCol_Text, rgba)
+        _color_themes[key] = t
+    # Special button themes
+    with dpg.theme() as t:
+        with dpg.theme_component(dpg.mvButton):
+            dpg.add_theme_color(dpg.mvThemeCol_Button,       PAL["info"])
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, PAL["info"])
+            dpg.add_theme_color(dpg.mvThemeCol_Text,          PAL["info_text"])
+    _color_themes["btn_info"] = t
+    with dpg.theme() as t:
+        with dpg.theme_component(dpg.mvButton):
+            dpg.add_theme_color(dpg.mvThemeCol_Button,       PAL["surface2"])
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, PAL["border"])
+            dpg.add_theme_color(dpg.mvThemeCol_Text,          PAL["muted"])
+    _color_themes["btn_muted"] = t
+
+def _recolor_text(item_tag, color_key):
+    """Bind a pre-built single-color theme to a text item."""
+    if not dpg.does_item_exist(item_tag):
+        return
+    theme = _color_themes.get(color_key)
+    if theme and dpg.does_item_exist(theme):
+        dpg.bind_item_theme(item_tag, theme)
 
 # ════════════════════════════════════════════════════════
 #  LOAD PREVIOUS STARTS
@@ -492,14 +519,11 @@ def build_entry_tab(parent):
     with dpg.group(parent=parent):
 
         # ── info banner ───────────────────────────
-        with dpg.theme() as banner_theme:
-            with dpg.theme_component(dpg.mvText):
-                dpg.add_theme_color(dpg.mvThemeCol_Text, PAL["green"])
         lbl = dpg.add_text(
             "✅  START ładuje się automatycznie z poprzedniego dnia "
             "— wpisujesz tylko END + POS.",
             wrap=dpg.get_viewport_width()-40)
-        dpg.bind_item_theme(lbl, banner_theme)
+        _recolor_text(lbl, "green")
 
         dpg.add_spacer(height=4)
 
@@ -518,14 +542,10 @@ def build_entry_tab(parent):
                                "entry_date", _today_str()) or _load_prev_starts())
             dpg.add_button(label="Następny ▶",
                            callback=lambda: _shift_entry_date(1))
-            with dpg.theme() as info_theme:
-                with dpg.theme_component(dpg.mvButton):
-                    dpg.add_theme_color(dpg.mvThemeCol_Button,        PAL["info"])
-                    dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered,  PAL["info"])
-                    dpg.add_theme_color(dpg.mvThemeCol_Text,           PAL["info_text"])
             imp_btn = dpg.add_button(label="📂 Importuj POS (xlsx)",
                                      callback=_import_pos)
-            dpg.bind_item_theme(imp_btn, info_theme)
+            if "btn_info" in _color_themes:
+                dpg.bind_item_theme(imp_btn, _color_themes["btn_info"])
 
         dpg.add_spacer(height=8)
 
@@ -701,14 +721,10 @@ def build_entry_tab(parent):
             dpg.add_button(label="🔄  Przelicz", callback=_recalc,
                            height=34)
             dpg.add_spacer(width=6)
-            with dpg.theme() as clr_theme:
-                with dpg.theme_component(dpg.mvButton):
-                    dpg.add_theme_color(dpg.mvThemeCol_Button,        PAL["surface2"])
-                    dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered,  PAL["border"])
-                    dpg.add_theme_color(dpg.mvThemeCol_Text,           PAL["muted"])
             clr = dpg.add_button(label="🗑  Wyczyść",
                                   callback=_clear_day, height=34)
-            dpg.bind_item_theme(clr, clr_theme)
+            if "btn_muted" in _color_themes:
+                dpg.bind_item_theme(clr, _color_themes["btn_muted"])
 
 # ════════════════════════════════════════════════════════
 #  HISTORY TAB
@@ -1016,14 +1032,10 @@ def build_settings_tab(parent):
             dpg.add_button(label="💾  Zapisz ustawienia",
                            callback=_save_settings, height=34)
             dpg.add_spacer(width=8)
-            with dpg.theme() as sec_theme:
-                with dpg.theme_component(dpg.mvButton):
-                    dpg.add_theme_color(dpg.mvThemeCol_Button,       PAL["surface2"])
-                    dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, PAL["border"])
-                    dpg.add_theme_color(dpg.mvThemeCol_Text,          PAL["muted"])
             ab = dpg.add_button(label="ℹ️  O programie",
                                  callback=_show_about, height=34)
-            dpg.bind_item_theme(ab, sec_theme)
+            if "btn_muted" in _color_themes:
+                dpg.bind_item_theme(ab, _color_themes["btn_muted"])
 
 _beer_rows  = []   # list of (name_tag, keg_tag, row_tag)
 _size_rows  = []   # list of (label_tag, liters_tag, row_tag)
@@ -1106,6 +1118,7 @@ def toggle_theme():
     PAL = dict(DARK if _theme_mode == "dark" else LIGHT)
     db.save_theme(_theme_mode)
     build_theme()
+    build_color_themes()
     icon = "☀️" if _theme_mode == "dark" else "🌙"
     if dpg.does_item_exist("theme_btn"):
         dpg.set_item_label("theme_btn", icon)
@@ -1120,6 +1133,7 @@ def build_ui():
     _theme_mode = db.get_theme()
     PAL = dict(DARK if _theme_mode == "dark" else LIGHT)
     build_theme()
+    build_color_themes()   # pre-build per-color text themes
 
     vp_w = dpg.get_viewport_width()
     vp_h = dpg.get_viewport_height()
